@@ -145,6 +145,7 @@ class MainWindow(QMainWindow):
         self.root=data_root(); self.models=self.root/"models"; self.engine=self.root/"engine"
         self.worker=None; self.search_worker=None; self.search_workers=[]; self.install_worker=None; self.engine_process=None; self.embedded_hwnd=None; self.selected_voice=None
         self.settings_file=self.root/"settings.json"
+        self.runtime_controls_file=self.root/"runtime-controls.json"
         try:self.settings=json.loads(self.settings_file.read_text(encoding="utf-8"))
         except Exception:self.settings={}
         self.active=self.settings.get("active_model","")
@@ -232,6 +233,10 @@ class MainWindow(QMainWindow):
         noise_row=QHBoxLayout()
         self.input_denoise=QCheckBox("Шумоподавление микрофона"); self.input_denoise.setChecked(True)
         self.output_denoise=QCheckBox("Очистка выходного звука"); self.output_denoise.setChecked(False)
+        for slider,_scale in self.tuning_sliders.values():
+            slider.valueChanged.connect(self.publish_runtime_controls)
+        self.input_denoise.toggled.connect(self.publish_runtime_controls)
+        self.output_denoise.toggled.connect(self.publish_runtime_controls)
         noise_row.addWidget(self.input_denoise); noise_row.addWidget(self.output_denoise); noise_row.addStretch(); st.addLayout(noise_row)
         noise_note=QLabel("Встроенный подавитель RVC снижает постоянный фоновый шум. Для сильного шума лучше использовать отдельный RNNoise/RTX Voice — встроенный фильтр не заменяет их.")
         noise_note.setObjectName("muted"); noise_note.setWordWrap(True); st.addWidget(noise_note)
@@ -494,6 +499,19 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self,"Готово","Маршрут аудио сохранён. В Discord выбери парное устройство виртуального кабеля как устройство ввода.")
         except Exception as e:QMessageBox.critical(self,"Не удалось сохранить устройства",str(e))
 
+    def publish_runtime_controls(self, *_args):
+        """Publish live-safe controls for the hidden RVC worker."""
+        try:
+            values={key: slider.value()/scale for key,(slider,scale) in self.tuning_sliders.items()}
+            values["I_noise_reduce"]=self.input_denoise.isChecked()
+            values["O_noise_reduce"]=self.output_denoise.isChecked()
+            temp=self.runtime_controls_file.with_suffix(".tmp")
+            temp.write_text(json.dumps(values,ensure_ascii=False),encoding="utf-8")
+            os.replace(temp,self.runtime_controls_file)
+        except Exception as e:
+            if hasattr(self,"audio_hint"):
+                self.audio_hint.setText("Не удалось передать настройки RVC: "+str(e))
+
     def save_rvc_tuning(self):
         cfg=self.engine/"configs"/"config.json"
         try:
@@ -534,6 +552,7 @@ class MainWindow(QMainWindow):
             return
         self.sync_models()
         self.save_rvc_tuning()
+        self.publish_runtime_controls()
         try:
             # Upstream RVC GUI checkboxes must load the saved denoiser preferences.
             upstream=self.engine/"realtime_gui.py"
@@ -559,6 +578,40 @@ class MainWindow(QMainWindow):
                 with urllib.request.urlopen(req,timeout=30) as response:
                     source=response.read().decode("utf-8")
                 compile(source,str(upstream),"exec")
+            # Poll live controls from MagicVoice without restarting the audio stream.
+            read_line = "                event, values = self.window.read()"
+            if read_line in source and "REALVOICEAI_CONTROLS" not in source:
+                poll = """                event, values = self.window.read(timeout=100)
+                controls_path = os.environ.get("REALVOICEAI_CONTROLS")
+                if controls_path:
+                    try:
+                        controls_mtime = os.path.getmtime(controls_path)
+                        if controls_mtime != getattr(self, "_realvoice_controls_mtime", None):
+                            with open(controls_path, "r", encoding="utf-8") as controls_file:
+                                controls = json.load(controls_file)
+                            self._realvoice_controls_mtime = controls_mtime
+                            self.gui_config.threhold = float(controls.get("threhold", self.gui_config.threhold))
+                            self.gui_config.rms_mix_rate = float(controls.get("rms_mix_rate", self.gui_config.rms_mix_rate))
+                            self.gui_config.I_noise_reduce = bool(controls.get("I_noise_reduce", self.gui_config.I_noise_reduce))
+                            self.gui_config.O_noise_reduce = bool(controls.get("O_noise_reduce", self.gui_config.O_noise_reduce))
+                            new_pitch = float(controls.get("pitch", self.gui_config.pitch))
+                            if new_pitch != self.gui_config.pitch:
+                                self.gui_config.pitch = new_pitch
+                                if hasattr(self, "rvc"):
+                                    self.rvc.change_key(new_pitch)
+                            new_index = float(controls.get("index_rate", self.gui_config.index_rate))
+                            if new_index != self.gui_config.index_rate:
+                                self.gui_config.index_rate = new_index
+                                if hasattr(self, "rvc"):
+                                    self.rvc.change_index_rate(new_index)
+                    except (OSError, ValueError, TypeError, json.JSONDecodeError) as controls_error:
+                        printt("MagicVoice controls update failed: %s", controls_error)
+"""
+                source = source.replace(read_line, poll, 1)
+                source = source.replace('''                elif event == "stop_vc" or event != "start_vc":''','''                elif event == "stop_vc" or (event is not None and event != "start_vc"):''',1)
+            elif "REALVOICEAI_CONTROLS" not in source:
+                raise RuntimeError("Не удалось встроить обработчик live-настроек в цикл RVC.")
+
             # Match the window construction independently of whitespace and
             # surrounding event-loop formatting; upstream has multiple variants.
             window_pattern = r'(?m)^([ \t]*)self\.window\s*=\s*sg\.Window\("RVC - GUI",\s*layout=layout,\s*finalize=True\)\s*$'
@@ -585,6 +638,7 @@ class MainWindow(QMainWindow):
             env=os.environ.copy()
             env["PATH"]=str(self.engine/"runtime")+os.pathsep+env.get("PATH","")
             env["REALVOICEAI_HEADLESS"]="1"
+            env["REALVOICEAI_CONTROLS"]=str(self.runtime_controls_file)
             self.engine_log=open(self.root/"rvc-runtime.log","a",encoding="utf-8",buffering=1)
             self.engine_process=subprocess.Popen(
                 [str(py),str(upstream)],cwd=str(self.engine),env=env,
