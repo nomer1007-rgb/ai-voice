@@ -31,56 +31,71 @@ class SearchWorker(QThread):
     results=Signal(list); failed=Signal(str)
     def __init__(self,query): super().__init__(); self.query=query
     def run(self):
+        found=[]; errors=[]
+        # Hugging Face: request model metadata with sibling file names to avoid
+        # making one API call per repository.
         try:
-            q=urllib.parse.urlencode({"search":self.query or "RVC voice","limit":100,"sort":"downloads","direction":"-1"})
+            q=urllib.parse.urlencode({"search":self.query or "RVC voice","limit":100,"sort":"downloads","direction":"-1","expand[]":"siblings"})
             items=get_json(API+"/models?"+q)
-            found=[]
             for m in items:
-                tags=m.get("tags",[])
-                if any(x in tags for x in ["text-to-speech","text-to-image"]): continue
-                model_id=m.get("id","")
-                if not model_id: continue
-                # Показываем только репозитории с настоящими RVC-весами (.pth),
-                # иначе кнопка установки ведёт к заведомо неподходящим проектам.
+                mid=m.get("id","")
+                siblings=m.get("siblings",[]) or []
+                paths=[x.get("rfilename","") for x in siblings if isinstance(x,dict)]
+                pths=[p for p in paths if p.lower().endswith(".pth") and not Path(p).name.upper().startswith(("G_","D_"))]
+                if not pths: continue
+                idxs=[p for p in paths if p.lower().endswith(".index")]
+                found.append({"id":mid,"source":"Hugging Face","downloads":m.get("downloads",0),"likes":m.get("likes",0),"pth_files":pths,"index_files":idxs})
+        except Exception as e: errors.append("Hugging Face: "+str(e))
+        # GitHub: discover repositories and inspect their default-branch trees.
+        try:
+            terms=urllib.parse.quote((self.query or "RVC voice model")+" RVC voice model")
+            repos=get_json("https://api.github.com/search/repositories?q="+terms+"&per_page=30&sort=stars")
+            for repo in repos.get("items",[])[:20]:
+                owner=repo.get("owner",{}).get("login",""); name=repo.get("name",""); branch=repo.get("default_branch","main")
+                if not owner or not name: continue
                 try:
-                    tree=get_json(API+"/models/"+urllib.parse.quote(model_id,safe="/")+"/tree/main?recursive=true&expand=false")
-                    pths=[x.get("path","") for x in tree if x.get("type")=="file" and x.get("path","").lower().endswith(".pth")]
+                    tree=get_json(f"https://api.github.com/repos/{owner}/{name}/git/trees/{urllib.parse.quote(branch,safe='')}?recursive=1")
+                    paths=[x.get("path","") for x in tree.get("tree",[]) if x.get("type")=="blob"]
+                    pths=[p for p in paths if p.lower().endswith(".pth") and not Path(p).name.upper().startswith(("G_","D_"))]
                     if not pths: continue
-                    idxs=[x.get("path","") for x in tree if x.get("type")=="file" and x.get("path","").lower().endswith(".index")]
-                except Exception:
-                    continue
-                found.append({"id":model_id,"downloads":m.get("downloads",0),"likes":m.get("likes",0),"tags":tags,"pth_files":pths,"index_files":idxs})
-            self.results.emit(found)
-        except Exception as e: self.failed.emit(str(e))
+                    idxs=[p for p in paths if p.lower().endswith(".index")]
+                    found.append({"id":f"{owner}/{name}","source":"GitHub","branch":branch,"downloads":repo.get("stargazers_count",0),"likes":repo.get("forks_count",0),"pth_files":pths,"index_files":idxs})
+                except Exception: continue
+        except Exception as e: errors.append("GitHub: "+str(e))
+        if found: self.results.emit(found)
+        elif errors: self.failed.emit("Не удалось получить модели. "+"; ".join(errors))
+        else: self.results.emit([])
 
 class InstallWorker(QThread):
     progress=Signal(str); done=Signal(bool,str,str)
-    def __init__(self,model_id,folder): super().__init__(); self.model_id=model_id; self.folder=Path(folder)
+    def __init__(self,model,folder): super().__init__(); self.model=model; self.folder=Path(folder)
     def run(self):
         try:
-            self.progress.emit("Проверяю файлы модели…")
-            files=get_json(API+"/models/"+urllib.parse.quote(self.model_id,safe="/")+"/tree/main?recursive=true&expand=false")
-            paths=[x.get("path","") for x in files if x.get("type")=="file"]
-            if not paths:
-                raise RuntimeError("Hugging Face не вернул список файлов модели. Возможно, репозиторий закрыт или недоступен.")
-            pths=[p for p in paths if p.lower().endswith(".pth")]
+            source=self.model.get("source","Hugging Face"); repo=self.model["id"]
+            self.progress.emit(f"Проверяю файлы модели ({source})…")
+            if source=="GitHub":
+                owner,name=repo.split("/",1); branch=self.model.get("branch","main")
+                tree=get_json(f"https://api.github.com/repos/{owner}/{name}/git/trees/{urllib.parse.quote(branch,safe='')}?recursive=1")
+                paths=[x.get("path","") for x in tree.get("tree",[]) if x.get("type")=="blob"]
+            else:
+                files=get_json(API+"/models/"+urllib.parse.quote(repo,safe="/")+"/tree/main?recursive=true&expand=false")
+                paths=[x.get("path","") for x in files if x.get("type")=="file"]
+            pths=[p for p in paths if p.lower().endswith(".pth") and not Path(p).name.upper().startswith(("G_","D_"))]
             idxs=[p for p in paths if p.lower().endswith(".index")]
-            if not pths: raise RuntimeError("В репозитории не найден файл .pth — это не готовая RVC-модель.")
-            pth=next((p for p in pths if "G_" not in p and "D_" not in p),pths[0])
-            stem=Path(pth).stem.lower()
+            if not pths: raise RuntimeError("В репозитории не найден файл весов .pth.")
+            pth=pths[0]; stem=Path(pth).stem.lower()
             idx=next((p for p in idxs if stem in Path(p).stem.lower() or Path(p).stem.lower() in stem),idxs[0] if idxs else "")
             chosen=[pth]+([idx] if idx else [])
             self.folder.mkdir(parents=True,exist_ok=True)
             for n,path in enumerate(chosen,1):
                 name=Path(path).name; dest=self.folder/name
-                url="https://huggingface.co/"+self.model_id+"/resolve/main/"+urllib.parse.quote(path,safe="/")+"?download=true"
+                if source=="GitHub": url=f"https://raw.githubusercontent.com/{repo}/{branch}/"+urllib.parse.quote(path,safe="/")
+                else: url="https://huggingface.co/"+repo+"/resolve/main/"+urllib.parse.quote(path,safe="/")+"?download=true"
                 self.progress.emit(f"Загрузка {n}/{len(chosen)}: {name}")
                 req=urllib.request.Request(url,headers={"User-Agent":"RealVoiceAI/6.0"})
-                with urllib.request.urlopen(req,timeout=60) as response, open(dest,"wb") as out:
-                    shutil.copyfileobj(response,out)
+                with urllib.request.urlopen(req,timeout=120) as response, open(dest,"wb") as out: shutil.copyfileobj(response,out)
             self.done.emit(True,pth,idx)
         except Exception as e: self.done.emit(False,str(e),"")
-
 class EngineWorker(QThread):
     output=Signal(str); done=Signal(bool,str)
     def __init__(self,script): super().__init__(); self.script=script
@@ -100,7 +115,7 @@ class VoiceCard(QFrame):
         l=QVBoxLayout(self); l.setContentsMargins(14,12,14,12); l.setSpacing(7)
         icon=QLabel("♫"); icon.setObjectName("voiceIcon"); icon.setAlignment(Qt.AlignmentFlag.AlignCenter); l.addWidget(icon)
         name=QLabel(data["id"].split("/")[-1]); name.setObjectName("voiceName"); name.setWordWrap(True); l.addWidget(name)
-        owner=QLabel(data["id"]); owner.setObjectName("muted"); owner.setWordWrap(True); l.addWidget(owner)
+        owner=QLabel(data.get("source","Hugging Face")+" · "+data["id"]); owner.setObjectName("muted"); owner.setWordWrap(True); l.addWidget(owner)
         meta=QLabel(f"↓ {data.get('downloads',0):,}   ♥ {data.get('likes',0)}"); meta.setObjectName("muted"); l.addWidget(meta)
         self.setMinimumHeight(145); self.setMaximumHeight(175)
     def mousePressEvent(self,event): self.clicked.emit(self.data)
@@ -130,7 +145,7 @@ class MainWindow(QMainWindow):
         searchbtn=QPushButton("Найти"); searchbtn.setObjectName("primary"); searchbtn.clicked.connect(self.search_models); top.addWidget(searchbtn)
         ml.addLayout(top)
         self.categories=QHBoxLayout()
-        for label,query in [("Все","RVC voice"),("Популярные","RVC"),("Мужские","male RVC voice"),("Женские","female RVC voice"),("Аниме","anime RVC"),("Персонажи","character RVC")]:
+        for label,query in [("Все","RVC voice"),("Популярные","RVC voice popular"),("Мужские","male RVC voice"),("Женские","female RVC voice"),("Аниме","anime character RVC"),("Персонажи","fictional character RVC")]:
             b=QPushButton(label); b.clicked.connect(lambda checked=False,q=query:self.load_category(q)); self.categories.addWidget(b)
         ml.addLayout(self.categories)
         self.pages=QStackedWidget(); ml.addWidget(self.pages,1)
@@ -210,7 +225,7 @@ class MainWindow(QMainWindow):
         for i,item in enumerate(items):
             card=VoiceCard(item); card.clicked.connect(self.select_voice)
             self.grid.addWidget(card,i//3,i%3)
-        self.search_status.setText(f"Найдено моделей: {len(items)}. Выбери карточку, чтобы посмотреть установку.")
+        self.search_status.setText(f"Найдено RVC-моделей: {len(items)} из Hugging Face и GitHub. Выбери карточку для установки.")
 
     def load_category(self,q):
         self.search.setText(q if q!="RVC voice" else "")
@@ -230,7 +245,7 @@ class MainWindow(QMainWindow):
     def install_selected(self):
         if not self.selected_voice:return
         self.install_btn.setEnabled(False); self.search_status.setText("Подготовка установки…")
-        self.install_worker=InstallWorker(self.selected_voice["id"],self.models)
+        self.install_worker=InstallWorker(self.selected_voice,self.models)
         self.install_worker.progress.connect(self.search_status.setText)
         self.install_worker.done.connect(self.install_done); self.install_worker.start()
 
