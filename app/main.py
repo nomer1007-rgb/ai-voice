@@ -158,11 +158,14 @@ class MainWindow(QMainWindow):
         self.search_status=QLabel("Ищу доступные RVC-модели на Hugging Face…"); self.search_status.setObjectName("muted"); cl.addWidget(self.search_status)
         self.pages.addWidget(cat)
         # local models page
-        mine=QWidget(); vl=QVBoxLayout(mine); vl.addWidget(QLabel("Установленные голосовые модели"))
-        self.local_list=QListWidget(); vl.addWidget(self.local_list,1)
-        row=QHBoxLayout(); imp=QPushButton("Импортировать .pth / .index"); imp.clicked.connect(self.import_model); row.addWidget(imp)
-        choose=QPushButton("Сделать активной"); choose.setObjectName("primary"); choose.clicked.connect(self.choose_local); row.addWidget(choose)
-        delete=QPushButton("Удалить"); delete.clicked.connect(self.delete_local); row.addWidget(delete); vl.addLayout(row)
+        mine=QWidget(); vl=QVBoxLayout(mine); vl.setContentsMargins(0,0,0,0); vl.setSpacing(12)
+        mine_head=QHBoxLayout(); mine_title=QLabel("Установленные голосовые модели"); mine_title.setObjectName("section"); mine_head.addWidget(mine_title); mine_head.addStretch()
+        self.local_search=QLineEdit(); self.local_search.setPlaceholderText("⌕   Найти среди моих голосов…"); self.local_search.setFixedWidth(310); self.local_search.textChanged.connect(self.refresh_local); mine_head.addWidget(self.local_search)
+        imp=QPushButton("Импортировать голос"); imp.setObjectName("primary"); imp.clicked.connect(self.import_model); mine_head.addWidget(imp); vl.addLayout(mine_head)
+        self.local_scroll=QScrollArea(); self.local_scroll.setWidgetResizable(True); self.local_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.local_host=QWidget(); self.local_grid=QGridLayout(self.local_host); self.local_grid.setContentsMargins(2,8,2,8); self.local_grid.setSpacing(12)
+        self.local_scroll.setWidget(self.local_host); vl.addWidget(self.local_scroll,1)
+        self.local_count=QLabel("Голосов: 0"); self.local_count.setObjectName("muted"); vl.addWidget(self.local_count)
         self.pages.addWidget(mine)
         # settings page - RVC GUI hosted in one parent window
         sett=QWidget(); st=QVBoxLayout(sett); st.addWidget(QLabel("Аудиоустройства и виртуальный микрофон"))
@@ -206,8 +209,10 @@ class MainWindow(QMainWindow):
         self.audio_hint.setObjectName("muted"); self.audio_hint.setWordWrap(True); st.addWidget(self.audio_hint)
         bar=QHBoxLayout(); launch=QPushButton("Запустить RVC"); launch.setObjectName("primary"); launch.clicked.connect(self.launch_engine); bar.addWidget(launch)
         stop=QPushButton("Остановить"); stop.clicked.connect(self.stop_engine); bar.addWidget(stop); bar.addStretch(); st.addLayout(bar)
-        self.rvc_panel=QFrame(); self.rvc_panel.setObjectName("rvcPanel"); self.rvc_panel.setMinimumHeight(400); self.rvc_panel.setAttribute(Qt.WidgetAttribute.WA_NativeWindow,True)
-        self.panel_layout=QVBoxLayout(self.rvc_panel); self.panel_hint=QLabel("После запуска движка панель управления RVC появится здесь."); self.panel_hint.setAlignment(Qt.AlignmentFlag.AlignCenter); self.panel_layout.addWidget(self.panel_hint); st.addWidget(self.rvc_panel,1)
+        self.engine_status_card=QFrame(); self.engine_status_card.setObjectName("tuneCard"); status_layout=QHBoxLayout(self.engine_status_card)
+        self.engine_status_dot=QLabel("●"); self.engine_status_dot.setStyleSheet("color:#8888aa;font-size:22px"); status_layout.addWidget(self.engine_status_dot)
+        self.panel_hint=QLabel("Движок остановлен. Выбери голос и нажми «Запустить RVC»."); self.panel_hint.setObjectName("section"); status_layout.addWidget(self.panel_hint,1)
+        st.addWidget(self.engine_status_card)
         self.pages.addWidget(sett)
         # bottom selected voice bar
         bottom=QFrame(); bottom.setObjectName("bottomBar"); bl=QHBoxLayout(bottom); bl.setContentsMargins(14,9,14,9)
@@ -236,6 +241,8 @@ class MainWindow(QMainWindow):
         QFrame#bottomBar{background:#141629;border:1px solid #292b49;border-radius:14px}
         QFrame#tuneCard{background:#131526;border:1px solid #292b49;border-radius:14px}
         QFrame#rvcPanel{background:#131526;border:1px solid #292b49;border-radius:12px}
+        QFrame#voiceCard QPushButton{padding:9px 10px}
+        QFrame#voiceCard QLabel#voiceIcon{min-height:64px;max-height:64px}
         QLabel#tuneLabel{font-weight:700;color:#e9e7ff}
         QLabel#tuneValue{color:#c5adff;font-weight:800;min-width:48px;background:#1c1c32;border-radius:6px;padding:4px}
         QSlider#tuneSlider{min-height:22px}
@@ -325,10 +332,28 @@ class MainWindow(QMainWindow):
         self.search_status.setText("Голос установлен. Открой «Мои модели» и сделай его активным.")
 
     def refresh_local(self):
-        self.local_list.clear()
-        for p in sorted(self.models.glob("*.pth")):
-            self.local_list.addItem(("✓ " if p.name==self.active else "")+p.name)
-        if not list(self.models.glob("*.pth")):self.local_list.addItem("Пока нет установленных моделей")
+        while self.local_grid.count():
+            item=self.local_grid.takeAt(0); widget=item.widget()
+            if widget: widget.deleteLater()
+        files=sorted(self.models.glob("*.pth"),key=lambda p:p.name.lower())
+        query=self.local_search.text().strip().lower() if hasattr(self,"local_search") else ""
+        shown=[p for p in files if query in p.stem.lower()]
+        for i,p in enumerate(shown):
+            card=QFrame(); card.setObjectName("voiceCard"); box=QVBoxLayout(card); box.setContentsMargins(14,12,14,12); box.setSpacing(8)
+            icon=QLabel("♫"); icon.setObjectName("voiceIcon"); icon.setAlignment(Qt.AlignmentFlag.AlignCenter); box.addWidget(icon)
+            name=QLabel(p.stem); name.setObjectName("voiceName"); name.setWordWrap(True); box.addWidget(name)
+            idx=next((x for x in self.models.glob("*.index") if p.stem.lower() in x.stem.lower() or x.stem.lower() in p.stem.lower()),None)
+            size=p.stat().st_size/(1024*1024)
+            meta=QLabel(f"RVC · .pth · {size:.1f} МБ"+(" · .index" if idx else "")); meta.setObjectName("muted"); box.addWidget(meta)
+            active=QLabel("✓ Активный голос" if p.name==self.active else "Установленная модель"); active.setObjectName("muted"); box.addWidget(active)
+            actions=QHBoxLayout()
+            use=QPushButton("✓  Активен" if p.name==self.active else "Применить"); use.setObjectName("primary"); use.setEnabled(p.name!=self.active)
+            use.clicked.connect(lambda checked=False,path=p:self.set_local_active(path)); actions.addWidget(use,1)
+            remove=QPushButton("⋮"); remove.setFixedWidth(40); remove.setToolTip("Удалить модель"); remove.clicked.connect(lambda checked=False,path=p:self.delete_model_file(path)); actions.addWidget(remove)
+            box.addLayout(actions); self.local_grid.addWidget(card,i//3,i%3)
+        if not shown:
+            empty=QLabel("Пока нет установленных голосов." if not files else "По этому запросу ничего не найдено."); empty.setObjectName("muted"); self.local_grid.addWidget(empty,0,0)
+        if hasattr(self,"local_count"): self.local_count.setText(f"Голосов: {len(files)}")
 
     def import_model(self):
         files,_=QFileDialog.getOpenFileNames(self,"Импорт файлов RVC",str(Path.home()),"RVC (*.pth *.index)")
@@ -337,11 +362,13 @@ class MainWindow(QMainWindow):
             if src.resolve()!=dst.resolve():shutil.copy2(src,dst)
         self.refresh_local()
 
+    def set_local_active(self,path):
+        self.active=path.name; self.save(); self.refresh_local(); self.sync_models()
+        self.search_status.setText(f"Активный голос: {path.stem}. Перезапусти RVC, если движок уже работает.")
+
     def choose_local(self):
-        row=self.local_list.currentRow(); files=sorted(self.models.glob("*.pth"))
-        if row<0 or row>=len(files):return
-        self.active=files[row].name; self.save(); self.refresh_local(); self.sync_models()
-        QMessageBox.information(self,"Активный голос",f"Выбрана модель {self.active}. В RVC также выбери соответствующий файл индекса, если он есть.")
+        files=sorted(self.models.glob("*.pth"))
+        if files:self.set_local_active(files[0])
 
     def activate_selected(self):
         if not self.selected_voice:return
@@ -349,14 +376,17 @@ class MainWindow(QMainWindow):
         self.pages.setCurrentIndex(1)
         self.search_status.setText("После установки выбери файл модели в списке «Мои модели».")
 
-    def delete_local(self):
-        row=self.local_list.currentRow(); files=sorted(self.models.glob("*.pth"))
-        if row<0 or row>=len(files):return
-        p=files[row]
+    def delete_model_file(self,p):
         if QMessageBox.question(self,"Удалить модель",f"Удалить {p.name}?")!=QMessageBox.StandardButton.Yes:return
-        p.unlink()
-        if self.active==p.name:self.active=""; self.save()
-        self.refresh_local()
+        try:
+            p.unlink()
+            if self.active==p.name:self.active=""; self.save()
+            self.refresh_local()
+        except Exception as e: QMessageBox.warning(self,"Не удалось удалить модель",str(e))
+
+    def delete_local(self):
+        files=sorted(self.models.glob("*.pth"))
+        if files:self.delete_model_file(files[0])
 
     def save(self):
         self.settings["active_model"]=self.active; self.settings_file.write_text(json.dumps(self.settings,indent=2),encoding="utf-8")
@@ -469,42 +499,29 @@ class MainWindow(QMainWindow):
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0)
             )
-            self.panel_hint.setText("Подключаю аудиодвижок…"); self.embed_timer=QTimer(self); self.embed_timer.timeout.connect(self.try_embed); self.embed_timer.start(500)
+            self.panel_hint.setText("Запускаю аудиодвижок…"); self.engine_status_dot.setStyleSheet("color:#f0b44d;font-size:22px")
+            self.embed_timer=QTimer(self); self.embed_timer.timeout.connect(self.try_hide_engine_window); self.embed_timer.start(500)
         except Exception as e:QMessageBox.critical(self,"Ошибка запуска",str(e))
 
-    def try_embed(self):
-        if os.name!="nt":return
-        hwnd=ctypes.windll.user32.FindWindowW(None,"RVC - GUI")
-        if hwnd:
-            u=ctypes.windll.user32
-            # Make the RVC controls a borderless child surface, not a second window.
-            GWL_STYLE=-16; GWL_EXSTYLE=-20
-            style=u.GetWindowLongW(hwnd,GWL_STYLE)
-            style &= ~(0x80000000 | 0x00C00000 | 0x00040000 | 0x00080000 | 0x00020000 | 0x00010000)
-            style |= 0x40000000 | 0x10000000
-            u.SetWindowLongW(hwnd,GWL_STYLE,style)
-            exstyle=u.GetWindowLongW(hwnd,GWL_EXSTYLE)
-            u.SetWindowLongW(hwnd,GWL_EXSTYLE,exstyle & ~0x00040000)
-            u.SetParent(hwnd,int(self.rvc_panel.winId()))
-            u.SetWindowPos(hwnd,0,0,0,0,0,0x0027)
-            self.embedded_hwnd=hwnd
-            self.panel_hint.hide(); self.resize_embedded(); self.embed_timer.stop()
-        elif self.engine_process and self.engine_process.poll() is not None:
-            self.embed_timer.stop(); self.panel_hint.setText("RVC закрылся при запуске. Проверь файл модели и журнал движка.")
-
-    def resize_embedded(self):
-        if self.embedded_hwnd and os.name=="nt":
-            r=self.rvc_panel.contentsRect(); ctypes.windll.user32.MoveWindow(self.embedded_hwnd,4,4,max(100,r.width()-8),max(100,r.height()-8),True)
-
-    def resizeEvent(self,event):
-        super().resizeEvent(event); self.resize_embedded()
+    def try_hide_engine_window(self):
+        if os.name=="nt":
+            hwnd=ctypes.windll.user32.FindWindowW(None,"RVC - GUI")
+            if hwnd:
+                ctypes.windll.user32.ShowWindow(hwnd,0)  # keep upstream engine alive without showing its legacy UI
+                self.embed_timer.stop()
+                self.engine_status_dot.setStyleSheet("color:#36d982;font-size:22px")
+                self.panel_hint.setText("Движок запущен. Управление выполняется из RealVoiceAI.")
+                return
+        if self.engine_process and self.engine_process.poll() is not None:
+            self.embed_timer.stop(); self.engine_status_dot.setStyleSheet("color:#e05b75;font-size:22px")
+            self.panel_hint.setText("RVC завершился при запуске. Проверь модель и журнал движка.")
 
     def stop_engine(self):
         if self.engine_process and self.engine_process.poll() is None:
             subprocess.run(["taskkill","/PID",str(self.engine_process.pid),"/T","/F"],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-        self.embedded_hwnd=None
         if hasattr(self,"embed_timer"):self.embed_timer.stop()
-        self.panel_hint.setText("Движок остановлен."); self.panel_hint.show()
+        if hasattr(self,"engine_status_dot"):self.engine_status_dot.setStyleSheet("color:#8888aa;font-size:22px")
+        self.panel_hint.setText("Движок остановлен. Выбери голос и нажми «Запустить RVC».")
 
     def closeEvent(self,event):
         self.stop_engine(); super().closeEvent(event)
