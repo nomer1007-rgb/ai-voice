@@ -1,4 +1,4 @@
-import os, sys, json, shutil, subprocess, ctypes, urllib.request, urllib.parse
+import os, sys, json, shutil, subprocess, ctypes, re, urllib.request, urllib.parse
 from pathlib import Path
 from PySide6.QtCore import QThread, Signal, QTimer, Qt
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
