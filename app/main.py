@@ -492,34 +492,65 @@ class MainWindow(QMainWindow):
                 upstream.write_text(source,encoding="utf-8")
             text=bat.read_text(encoding="utf-8-sig"); fixed=text.replace("runtime\\python.exe -I realtime_gui.py","runtime\\python.exe realtime_gui.py")
             if fixed!=text:bat.write_text(fixed,encoding="utf-8")
-            env=os.environ.copy(); env["PATH"]=str(self.engine/"runtime")+os.pathsep+env.get("PATH","")
-            # Run the batch launcher without creating a visible console window.
+            # Patch upstream RVC into a hidden worker and auto-start its real-time stream.
+            upstream=self.engine/"realtime_gui.py"
+            source=upstream.read_text(encoding="utf-8")
+            window_line='            self.window = sg.Window("RVC - GUI", layout=layout, finalize=True)\n            self.event_handler()'
+            hidden='''            if os.environ.get("REALVOICEAI_HEADLESS") == "1":
+                self.window = sg.Window("RVC - GUI", layout=layout, finalize=True, alpha_channel=0)
+                self.window.hide()
+                self.window.write_event_value("start_vc", None)
+            else:
+                self.window = sg.Window("RVC - GUI", layout=layout, finalize=True)
+            self.event_handler()'''
+            if window_line not in source:
+                raise RuntimeError("Версия realtime_gui.py не совпадает с ожидаемой; скрытый запуск не применён.")
+            source=source.replace(window_line,hidden,1)
+            source=source.replace('''            if len(values["index_path"].strip()) == 0:
+                sg.popup(i18n("请选择index文件"))
+                return False''','''            if len(values["index_path"].strip()) == 0:
+                values["index_path"] = ""''',1)
+            upstream.write_text(source,encoding="utf-8")
+            py=self.engine/"runtime"/"python.exe"
+            if not py.exists(): raise RuntimeError("Не найден Python внутри RVC.")
+            env=os.environ.copy()
+            env["PATH"]=str(self.engine/"runtime")+os.pathsep+env.get("PATH","")
+            env["REALVOICEAI_HEADLESS"]="1"
+            self.engine_log=open(self.root/"rvc-runtime.log","a",encoding="utf-8",buffering=1)
             self.engine_process=subprocess.Popen(
-                ["cmd.exe","/c",str(bat)], cwd=str(self.engine), env=env,
-                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                [str(py),str(upstream)],cwd=str(self.engine),env=env,
+                stdin=subprocess.DEVNULL,stdout=self.engine_log,stderr=subprocess.STDOUT,
                 creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0)
             )
-            self.panel_hint.setText("Запускаю аудиодвижок…"); self.engine_status_dot.setStyleSheet("color:#f0b44d;font-size:22px")
-            self.embed_timer=QTimer(self); self.embed_timer.timeout.connect(self.try_hide_engine_window); self.embed_timer.start(500)
-        except Exception as e:QMessageBox.critical(self,"Ошибка запуска",str(e))
+            self.panel_hint.setText("Запускаю скрытый RVC и аудиопоток…")
+            self.engine_status_dot.setStyleSheet("color:#f0b44d;font-size:22px")
+            self.embed_timer=QTimer(self); self.embed_timer.timeout.connect(self.check_engine_process); self.embed_timer.start(1000)
+        except Exception as e:
+            self.engine_status_dot.setStyleSheet("color:#e05b75;font-size:22px")
+            QMessageBox.critical(self,"Ошибка запуска RVC",str(e))
 
-    def try_hide_engine_window(self):
-        if os.name=="nt":
-            hwnd=ctypes.windll.user32.FindWindowW(None,"RVC - GUI")
-            if hwnd:
-                ctypes.windll.user32.ShowWindow(hwnd,0)  # keep upstream engine alive without showing its legacy UI
-                self.embed_timer.stop()
-                self.engine_status_dot.setStyleSheet("color:#36d982;font-size:22px")
-                self.panel_hint.setText("Движок запущен. Управление выполняется из RealVoiceAI.")
-                return
-        if self.engine_process and self.engine_process.poll() is not None:
-            self.embed_timer.stop(); self.engine_status_dot.setStyleSheet("color:#e05b75;font-size:22px")
-            self.panel_hint.setText("RVC завершился при запуске. Проверь модель и журнал движка.")
+    def check_engine_process(self):
+        if not self.engine_process:
+            self.embed_timer.stop(); return
+        code=self.engine_process.poll()
+        if code is None:
+            self.engine_status_dot.setStyleSheet("color:#36d982;font-size:22px")
+            self.panel_hint.setText("RVC работает в фоне. Аудиопоток запущен.")
+            return
+        self.embed_timer.stop()
+        self.engine_status_dot.setStyleSheet("color:#e05b75;font-size:22px")
+        self.panel_hint.setText(f"RVC остановился (код {code}). Журнал: {self.root / 'rvc-runtime.log'}")
+        if getattr(self,"engine_log",None):
+            self.engine_log.close(); self.engine_log=None
 
     def stop_engine(self):
         if self.engine_process and self.engine_process.poll() is None:
             subprocess.run(["taskkill","/PID",str(self.engine_process.pid),"/T","/F"],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         if hasattr(self,"embed_timer"):self.embed_timer.stop()
+        if getattr(self,"engine_log",None):
+            try:self.engine_log.close()
+            except Exception:pass
+            self.engine_log=None
         if hasattr(self,"engine_status_dot"):self.engine_status_dot.setStyleSheet("color:#8888aa;font-size:22px")
         self.panel_hint.setText("Движок остановлен. Выбери голос и нажми «Запустить RVC».")
 
