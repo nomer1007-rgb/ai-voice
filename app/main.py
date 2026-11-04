@@ -462,12 +462,13 @@ class MainWindow(QMainWindow):
                 if scale==1:data[key]=slider.value()
             data["I_noise_reduce"]=self.input_denoise.isChecked()
             data["O_noise_reduce"]=self.output_denoise.isChecked()
-            active=next((p for p in self.models.glob("*.pth") if p.name==self.active),None)
-            if active:
-                data["pth_path"]=str(active.resolve())
-                indices=list(self.models.glob("*.index"))
-                match=next((p for p in indices if active.stem.lower() in p.stem.lower() or p.stem.lower() in active.stem.lower()),None)
-                data["index_path"]=str(match.resolve()) if match else ""
+            active=next((p for p in self.models.glob("*.pth") if p.name==self.active and p.is_file() and p.stat().st_size>0),None)
+            # Always overwrite these fields. Never let a stale model path survive
+            # when the user has not selected an installed voice.
+            data["pth_path"]=str(active.resolve()) if active else ""
+            indices=list(self.models.glob("*.index")) if active else []
+            match=next((p for p in indices if active.stem.lower() in p.stem.lower() or p.stem.lower() in active.stem.lower()),None) if active else None
+            data["index_path"]=str(match.resolve()) if match else ""
             cfg.parent.mkdir(parents=True,exist_ok=True)
             cfg.write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding="utf-8")
             self.audio_hint.setText("Настройки качества сохранены. Запусти или перезапусти RVC, чтобы применить их.")
@@ -477,6 +478,16 @@ class MainWindow(QMainWindow):
     def launch_engine(self):
         bat=self.engine/"go-realtime_gui.bat"
         if not bat.exists():QMessageBox.information(self,"RVC не установлен","Сначала установи движок.");return
+        active=next((p for p in self.models.glob("*.pth") if p.name==self.active and p.is_file() and p.stat().st_size>0),None)
+        if not active:
+            # Clear obsolete paths such as a model selected in an older session.
+            self.active=""
+            self.save()
+            self.save_rvc_tuning()
+            self.panel_hint.setText("Голос не выбран. Выбери установленную модель во вкладке «Мои модели».")
+            self.engine_status_dot.setStyleSheet("color:#e05b75;font-size:22px")
+            QMessageBox.warning(self,"Не выбран голос","Сначала выбери существующую модель .pth во вкладке «Мои модели». Старый путь к модели очищен.")
+            return
         self.sync_models()
         self.save_rvc_tuning()
         try:
@@ -495,6 +506,15 @@ class MainWindow(QMainWindow):
             # Patch upstream RVC into a hidden worker and auto-start its real-time stream.
             upstream=self.engine/"realtime_gui.py"
             source=upstream.read_text(encoding="utf-8")
+            # Previous releases could leave a malformed runtime patch behind.
+            # Restore the upstream script if it no longer parses, then patch once.
+            try:
+                compile(source,str(upstream),"exec")
+            except SyntaxError:
+                req=urllib.request.Request("https://raw.githubusercontent.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI/main/realtime_gui.py",headers={"User-Agent":"RealVoiceAI/6.0"})
+                with urllib.request.urlopen(req,timeout=30) as response:
+                    source=response.read().decode("utf-8")
+                compile(source,str(upstream),"exec")
             window_line='            self.window = sg.Window("RVC - GUI", layout=layout, finalize=True)\n            self.event_handler()'
             hidden='''            if os.environ.get("REALVOICEAI_HEADLESS") == "1":
                 self.window = sg.Window("RVC - GUI", layout=layout, finalize=True, alpha_channel=0)
@@ -510,6 +530,8 @@ class MainWindow(QMainWindow):
                 sg.popup(i18n("请选择index文件"))
                 return False''','''            if len(values["index_path"].strip()) == 0:
                 values["index_path"] = ""''',1)
+            # Validate the generated script before touching the installed engine.
+            compile(source,str(upstream),"exec")
             upstream.write_text(source,encoding="utf-8")
             py=self.engine/"runtime"/"python.exe"
             if not py.exists(): raise RuntimeError("Не найден Python внутри RVC.")
