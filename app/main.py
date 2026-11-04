@@ -613,15 +613,30 @@ class MainWindow(QMainWindow):
             self.engine_log.close(); self.engine_log=None
 
     def stop_engine(self):
+        # Stop the tracked RVC process tree first.
         if self.engine_process and self.engine_process.poll() is None:
-            subprocess.run(["taskkill","/PID",str(self.engine_process.pid),"/T","/F"],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+            subprocess.run(["taskkill","/PID",str(self.engine_process.pid),"/T","/F"],
+                           stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=15)
+        # RVC/audio workers can outlive their launcher. Clean up only processes
+        # whose executable is this app's private embedded Python runtime.
+        py=self.engine/"runtime"/"python.exe"
+        if py.exists():
+            ps_script = "$target = '" + str(py).replace("'","''") + "'; " +
+                "Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -ieq $target } | " +
+                "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
+            try:
+                subprocess.run(["powershell.exe","-NoProfile","-ExecutionPolicy","Bypass","-Command",ps_script],
+                               stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=20)
+            except Exception:
+                pass
+        self.engine_process=None
         if hasattr(self,"embed_timer"):self.embed_timer.stop()
         if getattr(self,"engine_log",None):
             try:self.engine_log.close()
             except Exception:pass
             self.engine_log=None
         if hasattr(self,"engine_status_dot"):self.engine_status_dot.setStyleSheet("color:#8888aa;font-size:22px")
-        self.panel_hint.setText("Движок остановлен. Выбери голос и нажми «Запустить RVC».")
+        if hasattr(self,"panel_hint"):self.panel_hint.setText("Движок остановлен. Выбери голос и нажми «Запустить RVC».")
 
     def closeEvent(self,event):
         self.stop_engine(); super().closeEvent(event)
