@@ -364,17 +364,31 @@ class MainWindow(QMainWindow):
             text=bat.read_text(encoding="utf-8-sig"); fixed=text.replace("runtime\\python.exe -I realtime_gui.py","runtime\\python.exe realtime_gui.py")
             if fixed!=text:bat.write_text(fixed,encoding="utf-8")
             env=os.environ.copy(); env["PATH"]=str(self.engine/"runtime")+os.pathsep+env.get("PATH","")
-            self.engine_process=subprocess.Popen(["cmd.exe","/c",str(bat)],cwd=str(self.engine),env=env)
-            self.panel_hint.setText("Подключаю панель RVC…"); self.embed_timer=QTimer(self); self.embed_timer.timeout.connect(self.try_embed); self.embed_timer.start(500)
+            # Run the batch launcher without creating a visible console window.
+            self.engine_process=subprocess.Popen(
+                ["cmd.exe","/c",str(bat)], cwd=str(self.engine), env=env,
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0)
+            )
+            self.panel_hint.setText("Подключаю аудиодвижок…"); self.embed_timer=QTimer(self); self.embed_timer.timeout.connect(self.try_embed); self.embed_timer.start(500)
         except Exception as e:QMessageBox.critical(self,"Ошибка запуска",str(e))
 
     def try_embed(self):
         if os.name!="nt":return
         hwnd=ctypes.windll.user32.FindWindowW(None,"RVC - GUI")
         if hwnd:
-            u=ctypes.windll.user32; style=u.GetWindowLongW(hwnd,-16)
-            u.SetWindowLongW(hwnd,-16,(style&~0x80000000)|0x40000000|0x10000000)
-            u.SetParent(hwnd,int(self.rvc_panel.winId())); self.embedded_hwnd=hwnd
+            u=ctypes.windll.user32
+            # Make the RVC controls a borderless child surface, not a second window.
+            GWL_STYLE=-16; GWL_EXSTYLE=-20
+            style=u.GetWindowLongW(hwnd,GWL_STYLE)
+            style &= ~(0x80000000 | 0x00C00000 | 0x00040000 | 0x00080000 | 0x00020000 | 0x00010000)
+            style |= 0x40000000 | 0x10000000
+            u.SetWindowLongW(hwnd,GWL_STYLE,style)
+            exstyle=u.GetWindowLongW(hwnd,GWL_EXSTYLE)
+            u.SetWindowLongW(hwnd,GWL_EXSTYLE,exstyle & ~0x00040000)
+            u.SetParent(hwnd,int(self.rvc_panel.winId()))
+            u.SetWindowPos(hwnd,0,0,0,0,0,0x0027)
+            self.embedded_hwnd=hwnd
             self.panel_hint.hide(); self.resize_embedded(); self.embed_timer.stop()
         elif self.engine_process and self.engine_process.poll() is not None:
             self.embed_timer.stop(); self.panel_hint.setText("RVC закрылся при запуске. Проверь файл модели и журнал движка.")
