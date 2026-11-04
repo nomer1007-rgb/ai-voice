@@ -1,6 +1,8 @@
-name: Build Windows installer
+name: Build Real Voice AI Windows installer
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -22,15 +24,16 @@ jobs:
           pip install -r requirements.txt pyinstaller
 
       - name: Build application
-        run: pyinstaller --noconfirm --clean --windowed --name AIVoiceChangerRTX --collect-all PySide6 --collect-all shiboken6 --collect-all PySide6.QtWebEngineCore --collect-all PySide6.QtWebEngineWidgets app/main.py
+        run: pyinstaller --noconfirm --clean --windowed --name RealVoiceAI --collect-all PySide6 --collect-all shiboken6 app/main.py
 
       - name: Build installer
         shell: cmd
         run: |
-          if not exist release mkdir release
-          "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" installer\AIVoiceChangerRTX.iss
+          if not exist installer-output mkdir installer-output
+          "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" installer\RealVoiceAI.iss
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AI-Voice-Changer-RTX-Setup-v4
-          path: release/AI-Voice-Changer-RTX-Setup-v4.exe
+          name: RealVoiceAI-Setup-v5.2
+          path: installer-output/RealVoiceAI-Setup-v5.2.exe
+          if-no-files-found: error
