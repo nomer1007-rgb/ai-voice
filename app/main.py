@@ -166,9 +166,20 @@ class MainWindow(QMainWindow):
         self.pages=QStackedWidget(); ml.addWidget(self.pages,1)
         # catalogue page
         cat=QWidget(); cl=QVBoxLayout(cat); cl.setContentsMargins(0,0,0,0)
-        self.section=QLabel("Популярные голоса сообщества"); self.section.setObjectName("section"); cl.addWidget(self.section)
+        catalog_head=QHBoxLayout()
+        self.section=QLabel("Популярные голоса сообщества"); self.section.setObjectName("section"); catalog_head.addWidget(self.section); catalog_head.addStretch()
+        self.sort_combo=QComboBox()
+        self.sort_combo.addItem("Сначала популярные (скачивания)","downloads")
+        self.sort_combo.addItem("По лайкам","likes")
+        self.sort_combo.addItem("По названию","name")
+        self.sort_combo.currentIndexChanged.connect(self.sort_results)
+        catalog_head.addWidget(self.sort_combo)
+        cl.addLayout(catalog_head)
+        self.catalog_items=[]
         self.results_scroll=QScrollArea(); self.results_scroll.setWidgetResizable(True); self.results_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self.results_host=QWidget(); self.grid=QGridLayout(self.results_host); self.grid.setContentsMargins(2,8,2,8); self.grid.setSpacing(12)
+        self.results_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.results_host=QWidget(); self.grid=QGridLayout(self.results_host); self.grid.setContentsMargins(2,8,8,8); self.grid.setSpacing(12)
+        for col in range(3): self.grid.setColumnStretch(col,1)
         self.results_scroll.setWidget(self.results_host); cl.addWidget(self.results_scroll,1)
         self.search_status=QLabel("Ищу доступные RVC-модели на Hugging Face…"); self.search_status.setObjectName("muted"); cl.addWidget(self.search_status)
         self.pages.addWidget(cat)
@@ -306,14 +317,24 @@ class MainWindow(QMainWindow):
             if w:w.deleteLater()
 
     def show_results(self,items):
+        self.catalog_items=list(items)
+        self.sort_results()
+
+    def sort_results(self,*_):
         self.clear_cards()
+        items=list(self.catalog_items)
+        key=self.sort_combo.currentData() if hasattr(self,"sort_combo") else "downloads"
+        if key=="name":
+            items.sort(key=lambda x:x.get("id","").split("/")[-1].casefold())
+        else:
+            items.sort(key=lambda x:int(x.get(key,0) or 0),reverse=True)
         if not items:
             self.search_status.setText("Модели не найдены. Попробуй «Все» или запрос RVC.")
             return
         for i,item in enumerate(items):
             card=VoiceCard(item); card.clicked.connect(self.select_voice)
             self.grid.addWidget(card,i//3,i%3)
-        self.search_status.setText(f"Найдено RVC-моделей: {len(items)} из Hugging Face и GitHub. Выбери карточку для установки.")
+        self.search_status.setText(f"Найдено RVC-моделей: {len(items)}. Сортировка: {self.sort_combo.currentText()}. Выбери карточку для установки.")
 
     def load_category(self,q):
         self.search.setText(q if q!="RVC voice" else "")
