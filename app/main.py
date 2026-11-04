@@ -18,9 +18,13 @@ def resource(name):
     meipass = getattr(sys, "_MEIPASS", None)
     if meipass:
         candidates.append(Path(meipass) / name)
-    candidates.append(Path(sys.executable).resolve().parent / name)
-    candidates.append(Path(sys.executable).resolve().parent / "_internal" / name)
+    exe_dir = Path(sys.executable).resolve().parent
+    candidates.append(exe_dir / name)
+    candidates.append(exe_dir / "_internal" / name)
+    candidates.append(exe_dir / "scripts" / Path(name).name)
+    candidates.append(exe_dir.parent / "scripts" / Path(name).name)
     candidates.append(Path(__file__).resolve().parent / name)
+    candidates.append(Path(__file__).resolve().parent / "scripts" / Path(name).name)
     for candidate in candidates:
         if candidate.is_file():
             return candidate
