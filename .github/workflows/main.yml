@@ -32,5 +32,5 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AI-Voice-Changer-RTX-Setup-v3
-          path: release/AI-Voice-Changer-RTX-Setup-v3.exe
+          name: AI-Voice-Changer-RTX-Setup-v4
+          path: release/AI-Voice-Changer-RTX-Setup-v4.exe
