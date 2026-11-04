@@ -12,8 +12,20 @@ def data_root():
     return p
 
 def resource(name):
-    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
-    return base / name
+    # Support both PyInstaller's bundled data directory and the explicit
+    # {app}\scripts copy installed by Inno Setup.
+    candidates = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.append(Path(meipass) / name)
+    candidates.append(Path(sys.executable).resolve().parent / name)
+    candidates.append(Path(sys.executable).resolve().parent / "_internal" / name)
+    candidates.append(Path(__file__).resolve().parent / name)
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    # Return the primary expected path so the error dialog remains informative.
+    return candidates[0] if candidates else Path(name)
 
 class EngineWorker(QThread):
     output = Signal(str)
@@ -38,7 +50,7 @@ class EngineWorker(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Real Voice AI — V5")
+        self.setWindowTitle("Real Voice AI — V5.1")
         self.resize(940, 690)
         self.root = data_root()
         self.models = self.root/"models"
@@ -54,7 +66,7 @@ class MainWindow(QMainWindow):
         top = QHBoxLayout()
         title = QLabel("REAL VOICE AI"); title.setObjectName("title")
         top.addWidget(title); top.addStretch()
-        v = QLabel("V5 • RVC REALTIME"); v.setObjectName("muted"); top.addWidget(v)
+        v = QLabel("V5.1 • RVC REALTIME"); v.setObjectName("muted"); top.addWidget(v)
         layout.addLayout(top)
         sub = QLabel("Нейросетевое преобразование голоса в реальном времени")
         sub.setObjectName("subtitle"); layout.addWidget(sub)
