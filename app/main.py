@@ -28,42 +28,57 @@ def get_json(url):
     with urllib.request.urlopen(req,timeout=25) as r: return json.loads(r.read().decode("utf-8"))
 
 class SearchWorker(QThread):
-    results=Signal(list); failed=Signal(str)
+    results=Signal(list); failed=Signal(str); progress=Signal(str)
     def __init__(self,query): super().__init__(); self.query=query
     def run(self):
-        found=[]; errors=[]
-        # Hugging Face: request model metadata with sibling file names to avoid
-        # making one API call per repository.
-        try:
-            q=urllib.parse.urlencode({"search":self.query or "RVC voice","limit":100,"sort":"downloads","direction":"-1","expand[]":"siblings"})
-            items=get_json(API+"/models?"+q)
-            for m in items:
-                mid=m.get("id","")
-                siblings=m.get("siblings",[]) or []
-                paths=[x.get("rfilename","") for x in siblings if isinstance(x,dict)]
-                pths=[p for p in paths if p.lower().endswith(".pth") and not Path(p).name.upper().startswith(("G_","D_"))]
-                if not pths: continue
-                idxs=[p for p in paths if p.lower().endswith(".index")]
-                found.append({"id":mid,"source":"Hugging Face","downloads":m.get("downloads",0),"likes":m.get("likes",0),"pth_files":pths,"index_files":idxs})
-        except Exception as e: errors.append("Hugging Face: "+str(e))
-        # GitHub: discover repositories and inspect their default-branch trees.
-        try:
-            terms=urllib.parse.quote((self.query or "RVC voice model")+" RVC voice model")
-            repos=get_json("https://api.github.com/search/repositories?q="+terms+"&per_page=30&sort=stars")
-            for repo in repos.get("items",[])[:20]:
-                owner=repo.get("owner",{}).get("login",""); name=repo.get("name",""); branch=repo.get("default_branch","main")
-                if not owner or not name: continue
-                try:
-                    tree=get_json(f"https://api.github.com/repos/{owner}/{name}/git/trees/{urllib.parse.quote(branch,safe='')}?recursive=1")
-                    paths=[x.get("path","") for x in tree.get("tree",[]) if x.get("type")=="blob"]
+        found=[]; errors=[]; seen=set()
+        # Search broad RVC repositories first. Category labels are hints, not
+        # literal repository names, so always retain the RVC term.
+        terms=[]
+        raw=(self.query or "").strip()
+        if not raw or raw.lower() in ("rvc voice","all","все"):
+            terms=["RVC"]
+        else:
+            terms=[raw, "RVC"]
+        self.progress.emit("Ищу RVC-модели на Hugging Face…")
+        for term in terms:
+            try:
+                q=urllib.parse.urlencode({"search":term,"limit":100,"sort":"downloads","direction":"-1","expand[]":"siblings"})
+                items=get_json(API+"/models?"+q)
+                for m in items:
+                    mid=m.get("id","")
+                    if not mid or mid in seen: continue
+                    siblings=m.get("siblings",[]) or []
+                    paths=[x.get("rfilename","") for x in siblings if isinstance(x,dict)]
                     pths=[p for p in paths if p.lower().endswith(".pth") and not Path(p).name.upper().startswith(("G_","D_"))]
                     if not pths: continue
                     idxs=[p for p in paths if p.lower().endswith(".index")]
-                    found.append({"id":f"{owner}/{name}","source":"GitHub","branch":branch,"downloads":repo.get("stargazers_count",0),"likes":repo.get("forks_count",0),"pth_files":pths,"index_files":idxs})
-                except Exception: continue
-        except Exception as e: errors.append("GitHub: "+str(e))
+                    seen.add(mid)
+                    found.append({"id":mid,"source":"Hugging Face","downloads":m.get("downloads",0),"likes":m.get("likes",0),"pth_files":pths,"index_files":idxs})
+            except Exception as e:
+                errors.append("Hugging Face: "+str(e))
+            if found: break
+        # GitHub is a fallback only; avoid serially walking dozens of huge trees.
+        if not found:
+            self.progress.emit("На Hugging Face ничего не найдено. Проверяю GitHub…")
+            try:
+                terms_q=urllib.parse.quote((raw+" RVC") if raw else "RVC voice conversion")
+                repos=get_json("https://api.github.com/search/repositories?q="+terms_q+"&per_page=12&sort=stars")
+                for repo in repos.get("items",[])[:12]:
+                    owner=repo.get("owner",{}).get("login",""); name=repo.get("name",""); branch=repo.get("default_branch","main")
+                    if not owner or not name: continue
+                    try:
+                        tree=get_json(f"https://api.github.com/repos/{owner}/{name}/git/trees/{urllib.parse.quote(branch,safe='')}?recursive=1")
+                        paths=[x.get("path","") for x in tree.get("tree",[]) if x.get("type")=="blob"]
+                        pths=[p for p in paths if p.lower().endswith(".pth") and not Path(p).name.upper().startswith(("G_","D_"))]
+                        if not pths: continue
+                        idxs=[p for p in paths if p.lower().endswith(".index")]
+                        found.append({"id":f"{owner}/{name}","source":"GitHub","branch":branch,"downloads":repo.get("stargazers_count",0),"likes":repo.get("forks_count",0),"pth_files":pths,"index_files":idxs})
+                    except Exception as e:
+                        errors.append(f"GitHub {owner}/{name}: {e}")
+            except Exception as e: errors.append("GitHub: "+str(e))
         if found: self.results.emit(found)
-        elif errors: self.failed.emit("Не удалось получить модели. "+"; ".join(errors))
+        elif errors: self.failed.emit("Не удалось загрузить каталог. "+"; ".join(errors[-3:]))
         else: self.results.emit([])
 
 class InstallWorker(QThread):
@@ -292,7 +307,9 @@ class MainWindow(QMainWindow):
 
     def show_results(self,items):
         self.clear_cards()
-        if not items:self.search_status.setText("Ничего не найдено. Попробуй другой запрос."); return
+        if not items:
+            self.search_status.setText("Модели не найдены. Попробуй «Все» или запрос RVC.")
+            return
         for i,item in enumerate(items):
             card=VoiceCard(item); card.clicked.connect(self.select_voice)
             self.grid.addWidget(card,i//3,i%3)
@@ -302,12 +319,12 @@ class MainWindow(QMainWindow):
         self.search.setText(q if q!="RVC voice" else "")
         self.section.setText(q.title()+" — каталог сообщества")
         self.search_status.setText("Поиск моделей…")
-        self.search_worker=SearchWorker(q); self.search_workers.append(self.search_worker); self.search_worker.finished.connect(lambda w=self.search_worker: self.search_workers.remove(w) if w in self.search_workers else None); self.search_worker.results.connect(self.show_results); self.search_worker.failed.connect(lambda e:self.search_status.setText("Не удалось получить каталог: "+e)); self.search_worker.start()
+        self.search_worker=SearchWorker(q); self.search_workers.append(self.search_worker); self.search_worker.finished.connect(lambda w=self.search_worker: self.search_workers.remove(w) if w in self.search_workers else None); self.search_worker.progress.connect(self.search_status.setText); self.search_worker.results.connect(self.show_results); self.search_worker.failed.connect(lambda e:self.search_status.setText(e)); self.search_worker.start()
 
     def search_models(self):
         q=self.search.text().strip() or "RVC voice"
         self.section.setText("Результаты поиска: "+q); self.search_status.setText("Ищу модели…")
-        self.search_worker=SearchWorker(q); self.search_workers.append(self.search_worker); self.search_worker.finished.connect(lambda w=self.search_worker: self.search_workers.remove(w) if w in self.search_workers else None); self.search_worker.results.connect(self.show_results); self.search_worker.failed.connect(lambda e:self.search_status.setText("Ошибка поиска: "+e)); self.search_worker.start()
+        self.search_worker=SearchWorker(q); self.search_workers.append(self.search_worker); self.search_worker.finished.connect(lambda w=self.search_worker: self.search_workers.remove(w) if w in self.search_workers else None); self.search_worker.progress.connect(self.search_status.setText); self.search_worker.results.connect(self.show_results); self.search_worker.failed.connect(lambda e:self.search_status.setText(e)); self.search_worker.start()
 
     def select_voice(self,data):
         self.selected_voice=data; self.selected_label.setText(data["id"]); self.install_btn.setEnabled(True)
