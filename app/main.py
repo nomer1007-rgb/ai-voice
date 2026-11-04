@@ -38,7 +38,18 @@ class SearchWorker(QThread):
             for m in items:
                 tags=m.get("tags",[])
                 if any(x in tags for x in ["text-to-speech","text-to-image"]): continue
-                found.append({"id":m.get("id",""),"downloads":m.get("downloads",0),"likes":m.get("likes",0),"tags":tags})
+                model_id=m.get("id","")
+                if not model_id: continue
+                # Показываем только репозитории с настоящими RVC-весами (.pth),
+                # иначе кнопка установки ведёт к заведомо неподходящим проектам.
+                try:
+                    tree=get_json(API+"/models/"+urllib.parse.quote(model_id,safe="/")+"/tree/main?recursive=true&expand=false")
+                    pths=[x.get("path","") for x in tree if x.get("type")=="file" and x.get("path","").lower().endswith(".pth")]
+                    if not pths: continue
+                    idxs=[x.get("path","") for x in tree if x.get("type")=="file" and x.get("path","").lower().endswith(".index")]
+                except Exception:
+                    continue
+                found.append({"id":model_id,"downloads":m.get("downloads",0),"likes":m.get("likes",0),"tags":tags,"pth_files":pths,"index_files":idxs})
             self.results.emit(found)
         except Exception as e: self.failed.emit(str(e))
 
@@ -50,6 +61,8 @@ class InstallWorker(QThread):
             self.progress.emit("Проверяю файлы модели…")
             files=get_json(API+"/models/"+urllib.parse.quote(self.model_id,safe="/")+"/tree/main?recursive=true&expand=false")
             paths=[x.get("path","") for x in files if x.get("type")=="file"]
+            if not paths:
+                raise RuntimeError("Hugging Face не вернул список файлов модели. Возможно, репозиторий закрыт или недоступен.")
             pths=[p for p in paths if p.lower().endswith(".pth")]
             idxs=[p for p in paths if p.lower().endswith(".index")]
             if not pths: raise RuntimeError("В репозитории не найден файл .pth — это не готовая RVC-модель.")
