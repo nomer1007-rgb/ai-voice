@@ -202,7 +202,7 @@ class MainWindow(QMainWindow):
         noise_row.addWidget(self.input_denoise); noise_row.addWidget(self.output_denoise); noise_row.addStretch(); st.addLayout(noise_row)
         noise_note=QLabel("Встроенный подавитель RVC снижает постоянный фоновый шум. Для сильного шума лучше использовать отдельный RNNoise/RTX Voice — встроенный фильтр не заменяет их.")
         noise_note.setObjectName("muted"); noise_note.setWordWrap(True); st.addWidget(noise_note)
-                self.audio_hint=QLabel("Для Discord затем выбери в настройках ввода устройство соответствующее «CABLE Output» или выходу выбранного виртуального кабеля.")
+        self.audio_hint=QLabel("Для Discord затем выбери в настройках ввода устройство соответствующее «CABLE Output» или выходу выбранного виртуального кабеля.")
         self.audio_hint.setObjectName("muted"); self.audio_hint.setWordWrap(True); st.addWidget(self.audio_hint)
         bar=QHBoxLayout(); launch=QPushButton("Запустить RVC"); launch.setObjectName("primary"); launch.clicked.connect(self.launch_engine); bar.addWidget(launch)
         stop=QPushButton("Остановить"); stop.clicked.connect(self.stop_engine); bar.addWidget(stop); bar.addStretch(); st.addLayout(bar)
@@ -217,9 +217,36 @@ class MainWindow(QMainWindow):
         self.set_active_btn=QPushButton("Выбрать"); self.set_active_btn.clicked.connect(self.activate_selected); self.set_active_btn.setEnabled(False); bl.addWidget(self.set_active_btn)
         ml.addWidget(bottom)
         self.setStyleSheet("""
-        QMainWindow,QWidget{background:#0d1023;color:#eef0ff;font-size:13px}
-        QFrame#sidebar{background:#07091e;border-right:1px solid #242444}
-        QLabel#brand{font-size:20px;font-weight:800;color:#fff;padding:4px}
+        QMainWindow,QWidget{background:#090b19;color:#eef0ff;font-size:13px}
+        QFrame#sidebar{background:#080a18;border-right:1px solid #25243e}
+        QLabel#brand{font-size:21px;font-weight:800;color:#fff;padding:8px 4px}
+        QLabel#heading{font-size:25px;font-weight:800;letter-spacing:0px}
+        QLabel#section{font-size:19px;font-weight:750;padding:10px 2px;color:#fff}
+        QPushButton{background:#17182b;border:1px solid #292943;border-radius:10px;padding:10px 14px;color:#e7e7f5}
+        QPushButton:hover{background:#282044;border-color:#8057ff}
+        QPushButton#primary{background:#8044f5;border:1px solid #986aff;color:white;font-weight:750;padding:11px 16px}
+        QPushButton#primary:hover{background:#955cff}
+        QPushButton#navActive{background:#30205b;border:1px solid #8754ff;text-align:left}
+        QLineEdit{background:#17172a;border:1px solid #302d50;border-radius:13px;padding:12px 14px;color:white}
+        QComboBox{background:#17172a;border:1px solid #302d50;border-radius:8px;padding:8px;color:#f0efff}
+        QFrame#voiceCard{background:#131526;border:1px solid #262943;border-radius:14px}
+        QFrame#voiceCard:hover{background:#1c1a36;border:1px solid #895aff}
+        QLabel#voiceIcon{background:#242344;border-radius:12px;color:#e7dfff;font-size:36px;min-height:64px;max-height:64px}
+        QLabel#voiceName{font-weight:750;color:white;font-size:14px}
+        QFrame#bottomBar{background:#141629;border:1px solid #292b49;border-radius:14px}
+        QFrame#tuneCard{background:#131526;border:1px solid #292b49;border-radius:14px}
+        QFrame#rvcPanel{background:#131526;border:1px solid #292b49;border-radius:12px}
+        QLabel#tuneLabel{font-weight:700;color:#e9e7ff}
+        QLabel#tuneValue{color:#c5adff;font-weight:800;min-width:48px;background:#1c1c32;border-radius:6px;padding:4px}
+        QSlider#tuneSlider{min-height:22px}
+        QSlider#tuneSlider::groove:horizontal{height:6px;background:#302d4b;border-radius:3px}
+        QSlider#tuneSlider::sub-page:horizontal{background:#8752ff;border-radius:3px}
+        QSlider#tuneSlider::handle:horizontal{background:#fff;border:2px solid #9a75ff;width:16px;height:16px;margin:-7px 0;border-radius:8px}
+        QCheckBox{spacing:9px;color:#eeeaff;font-weight:650;padding:7px}
+        QCheckBox::indicator{width:18px;height:18px;border-radius:9px;background:#28283d;border:1px solid #665a90}
+        QCheckBox::indicator:checked{background:#8752ff;border:1px solid #b39aff}
+        QScrollArea{background:transparent;border:0}
+        QListWidget{background:#101225;border:0}
         QLabel#heading{font-size:24px;font-weight:800;letter-spacing:2px}
         QLabel#section{font-size:18px;font-weight:700;padding:8px 2px;color:#fff}
         QLabel#muted{color:#8589a9;font-size:11px}
@@ -426,9 +453,12 @@ class MainWindow(QMainWindow):
             # Upstream RVC GUI checkboxes must load the saved denoiser preferences.
             upstream=self.engine/"realtime_gui.py"
             if upstream.exists():
+                cfg=self.engine/"configs"/"config.json"
+                try: saved=json.loads(cfg.read_text(encoding="utf-8"))
+                except Exception: saved={}
                 source=upstream.read_text(encoding="utf-8")
-                source=source.replace('key="I_noise_reduce",\n                                    enable_events=True,','key="I_noise_reduce",\n                                    default=data.get("I_noise_reduce", False),\n                                    enable_events=True,')
-                source=source.replace('key="O_noise_reduce",\n                                    enable_events=True,','key="O_noise_reduce",\n                                    default=data.get("O_noise_reduce", False),\n                                    enable_events=True,')
+                source=source.replace('key="I_noise_reduce",\n                                    enable_events=True,','key="I_noise_reduce",\n                                    default='+str(bool(saved.get("I_noise_reduce",False)))+',\n                                    enable_events=True,')
+                source=source.replace('key="O_noise_reduce",\n                                    enable_events=True,','key="O_noise_reduce",\n                                    default='+str(bool(saved.get("O_noise_reduce",False)))+',\n                                    enable_events=True,')
                 upstream.write_text(source,encoding="utf-8")
             text=bat.read_text(encoding="utf-8-sig"); fixed=text.replace("runtime\\python.exe -I realtime_gui.py","runtime\\python.exe realtime_gui.py")
             if fixed!=text:bat.write_text(fixed,encoding="utf-8")
