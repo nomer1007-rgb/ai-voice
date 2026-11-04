@@ -3,7 +3,7 @@ from pathlib import Path
 from PySide6.QtCore import QThread, Signal, QTimer, Qt
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QListWidget, QListWidgetItem, QFileDialog, QMessageBox, QProgressBar,
-    QFrame, QLineEdit, QScrollArea, QGridLayout, QStackedWidget, QSizePolicy)
+    QFrame, QLineEdit, QScrollArea, QGridLayout, QStackedWidget, QSizePolicy, QComboBox)
 
 APP_NAME = "Real Voice AI"
 API = "https://huggingface.co/api"
@@ -137,7 +137,18 @@ class MainWindow(QMainWindow):
         delete=QPushButton("Удалить"); delete.clicked.connect(self.delete_local); row.addWidget(delete); vl.addLayout(row)
         self.pages.addWidget(mine)
         # settings page - RVC GUI hosted in one parent window
-        sett=QWidget(); st=QVBoxLayout(sett); st.addWidget(QLabel("Аудиоустройства и параметры преобразования"))
+        sett=QWidget(); st=QVBoxLayout(sett); st.addWidget(QLabel("Аудиоустройства и виртуальный микрофон"))
+        st.addWidget(QLabel("Выбери физический микрофон и виртуальный выход (например, CABLE Input или VoiceMeeter Input). Именно этот выход станет источником виртуального микрофона для Discord."))
+        devices=QHBoxLayout()
+        self.input_device=QComboBox(); self.input_device.setMinimumWidth(260)
+        self.output_device=QComboBox(); self.output_device.setMinimumWidth(260)
+        devices.addWidget(QLabel("Микрофон:")); devices.addWidget(self.input_device,1)
+        devices.addWidget(QLabel("Виртуальный выход:")); devices.addWidget(self.output_device,1)
+        refresh=QPushButton("Обновить устройства"); refresh.clicked.connect(self.refresh_audio_devices); devices.addWidget(refresh)
+        applydev=QPushButton("Применить"); applydev.setObjectName("primary"); applydev.clicked.connect(self.apply_audio_devices); devices.addWidget(applydev)
+        st.addLayout(devices)
+        self.audio_hint=QLabel("Для Discord затем выбери в настройках ввода устройство соответствующее «CABLE Output» или выходу выбранного виртуального кабеля.")
+        self.audio_hint.setObjectName("muted"); self.audio_hint.setWordWrap(True); st.addWidget(self.audio_hint)
         bar=QHBoxLayout(); launch=QPushButton("Запустить RVC"); launch.setObjectName("primary"); launch.clicked.connect(self.launch_engine); bar.addWidget(launch)
         stop=QPushButton("Остановить"); stop.clicked.connect(self.stop_engine); bar.addWidget(stop); bar.addStretch(); st.addLayout(bar)
         self.rvc_panel=QFrame(); self.rvc_panel.setObjectName("rvcPanel"); self.rvc_panel.setMinimumHeight(400); self.rvc_panel.setAttribute(Qt.WidgetAttribute.WA_NativeWindow,True)
@@ -268,6 +279,7 @@ class MainWindow(QMainWindow):
         ready=all(p.exists() for p in [self.engine/"go-realtime_gui.bat",self.engine/"runtime"/"python.exe",self.engine/"assets"/"hubert_base"/"config.json",self.engine/"assets"/"rmvpe"/"rmvpe.pt"])
         self.engine_state.setText("RVC готов" if ready else "RVC ещё не установлен")
         self.install_engine_btn.setEnabled(not ready)
+        if ready and hasattr(self,"input_device") and self.input_device.count()==0:self.refresh_audio_devices()
 
     def install_engine(self):
         script=resource("scripts/install_rvc.ps1")
@@ -278,6 +290,43 @@ class MainWindow(QMainWindow):
     def engine_done(self,ok,msg):
         self.install_engine_btn.setEnabled(True); self.engine_state.setText(msg); self.update_engine_state()
         if not ok:QMessageBox.warning(self,"Установка RVC",msg)
+
+    def refresh_audio_devices(self):
+        py=self.engine/"runtime"/"python.exe"
+        if not py.exists():
+            self.audio_hint.setText("Сначала установи RVC-движок, чтобы обнаружить аудиоустройства.")
+            return
+        code="import sounddevice as sd,json; print(json.dumps({'devices':[{'name':d['name'],'inputs':d['max_input_channels'],'outputs':d['max_output_channels'],'hostapi':sd.query_hostapis()[d['hostapi']]['name']} for d in sd.query_devices()]}))"
+        try:
+            result=subprocess.run([str(py),"-c",code],cwd=str(self.engine),capture_output=True,text=True,timeout=20)
+            if result.returncode: raise RuntimeError(result.stderr[-1200:])
+            payload=json.loads(result.stdout.strip().splitlines()[-1])
+            self.input_device.clear(); self.output_device.clear()
+            for d in payload["devices"]:
+                label=f'{d["name"]}  [{d["hostapi"]}]'
+                if d["inputs"]>0:self.input_device.addItem(label,d)
+                if d["outputs"]>0:self.output_device.addItem(label,d)
+            self.audio_hint.setText(f'Найдено входов: {self.input_device.count()}, выходов: {self.output_device.count()}. Для Discord выбирай виртуальный выход кабеля, а в Discord — его парный CABLE Output.')
+        except Exception as e:
+            self.audio_hint.setText("Не удалось получить список устройств: "+str(e))
+
+    def apply_audio_devices(self):
+        if not self.input_device.currentData() or not self.output_device.currentData():
+            QMessageBox.warning(self,"Аудиоустройства","Обнови список и выбери микрофон и виртуальный выход."); return
+        if self.engine_process and self.engine_process.poll() is None:
+            QMessageBox.information(self,"Перезапусти RVC","Останови RVC перед применением новых устройств, затем запусти снова."); return
+        cfg=self.engine/"configs"/"config.json"
+        try:
+            try:data=json.loads(cfg.read_text(encoding="utf-8"))
+            except Exception:data={}
+            inp=self.input_device.currentData(); out=self.output_device.currentData()
+            if inp["hostapi"]!=out["hostapi"]:
+                QMessageBox.warning(self,"Несовместимые устройства","Выбери микрофон и виртуальный выход одного аудиодрайвера (обычно Windows WASAPI)."); return
+            data["sg_hostapi"]=out["hostapi"]; data["sg_input_device"]=inp["name"]; data["sg_output_device"]=out["name"]
+            cfg.parent.mkdir(parents=True,exist_ok=True); cfg.write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding="utf-8")
+            self.audio_hint.setText("Устройства сохранены. Запусти RVC — преобразованный звук пойдёт в выбранный виртуальный выход.")
+            QMessageBox.information(self,"Готово","Маршрут аудио сохранён. В Discord выбери парное устройство виртуального кабеля как устройство ввода.")
+        except Exception as e:QMessageBox.critical(self,"Не удалось сохранить устройства",str(e))
 
     def launch_engine(self):
         bat=self.engine/"go-realtime_gui.bat"
