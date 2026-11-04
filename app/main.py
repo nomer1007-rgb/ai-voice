@@ -534,7 +534,18 @@ class MainWindow(QMainWindow):
                 compile(source,str(upstream),"exec")
             # Match the window construction independently of whitespace and
             # surrounding event-loop formatting; upstream has multiple variants.
-            window_pattern=r'(?m)^(?P<indent>[ \\t]*)self\\.window\\s*=\\s*sg\\.Window\\(["\\']RVC - GUI["\\'],\\s*layout=layout,\\s*finalize=True\\)\\s*
+            window_pattern = r'(?m)^([ \t]*)self\.window\s*=\s*sg\.Window\("RVC - GUI",\s*layout=layout,\s*finalize=True\)\s*$'
+            def make_hidden_window(match):
+                indent = match.group(1)
+                return (indent + 'if os.environ.get("REALVOICEAI_HEADLESS") == "1":\n'
+                        + indent + '    self.window = sg.Window("RVC - GUI", layout=layout, finalize=True, alpha_channel=0)\n'
+                        + indent + '    self.window.hide()\n'
+                        + indent + '    self.window.write_event_value("start_vc", None)\n'
+                        + indent + 'else:\n'
+                        + indent + '    self.window = sg.Window("RVC - GUI", layout=layout, finalize=True)')
+            source, count = re.subn(window_pattern, make_hidden_window, source, count=1)
+            if count != 1 and not ('REALVOICEAI_HEADLESS' in source and 'self.window.write_event_value("start_vc", None)' in source):
+                raise RuntimeError("Не удалось распознать создание окна RVC. Установленный файл не изменён.")
             source=source.replace('''            if len(values["index_path"].strip()) == 0:
                 sg.popup(i18n("请选择index文件"))
                 return False''','''            if len(values["index_path"].strip()) == 0:
