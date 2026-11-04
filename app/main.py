@@ -423,6 +423,13 @@ class MainWindow(QMainWindow):
         self.sync_models()
         self.save_rvc_tuning()
         try:
+            # Upstream RVC GUI checkboxes must load the saved denoiser preferences.
+            upstream=self.engine/"realtime_gui.py"
+            if upstream.exists():
+                source=upstream.read_text(encoding="utf-8")
+                source=source.replace('key="I_noise_reduce",\n                                    enable_events=True,','key="I_noise_reduce",\n                                    default=data.get("I_noise_reduce", False),\n                                    enable_events=True,')
+                source=source.replace('key="O_noise_reduce",\n                                    enable_events=True,','key="O_noise_reduce",\n                                    default=data.get("O_noise_reduce", False),\n                                    enable_events=True,')
+                upstream.write_text(source,encoding="utf-8")
             text=bat.read_text(encoding="utf-8-sig"); fixed=text.replace("runtime\\python.exe -I realtime_gui.py","runtime\\python.exe realtime_gui.py")
             if fixed!=text:bat.write_text(fixed,encoding="utf-8")
             env=os.environ.copy(); env["PATH"]=str(self.engine/"runtime")+os.pathsep+env.get("PATH","")
