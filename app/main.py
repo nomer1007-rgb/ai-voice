@@ -32,7 +32,7 @@ class SearchWorker(QThread):
     def __init__(self,query): super().__init__(); self.query=query
     def run(self):
         try:
-            q=urllib.parse.urlencode({"search":self.query or "RVC voice","limit":60,"sort":"downloads","direction":"-1"})
+            q=urllib.parse.urlencode({"search":self.query or "RVC voice","limit":100,"sort":"downloads","direction":"-1"})
             items=get_json(API+"/models?"+q)
             found=[]
             for m in items:
@@ -96,7 +96,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__(); self.setWindowTitle("Real Voice AI"); self.resize(1280,850); self.setMinimumSize(980,700)
         self.root=data_root(); self.models=self.root/"models"; self.engine=self.root/"engine"
-        self.worker=None; self.search_worker=None; self.install_worker=None; self.engine_process=None; self.embedded_hwnd=None; self.selected_voice=None
+        self.worker=None; self.search_worker=None; self.search_workers=[]; self.install_worker=None; self.engine_process=None; self.embedded_hwnd=None; self.selected_voice=None
         self.settings_file=self.root/"settings.json"
         try:self.settings=json.loads(self.settings_file.read_text(encoding="utf-8"))
         except Exception:self.settings={}
@@ -196,19 +196,19 @@ class MainWindow(QMainWindow):
         if not items:self.search_status.setText("Ничего не найдено. Попробуй другой запрос."); return
         for i,item in enumerate(items):
             card=VoiceCard(item); card.clicked.connect(self.select_voice)
-            self.grid.addWidget(card,i//5,i%5)
+            self.grid.addWidget(card,i//3,i%3)
         self.search_status.setText(f"Найдено моделей: {len(items)}. Выбери карточку, чтобы посмотреть установку.")
 
     def load_category(self,q):
         self.search.setText(q if q!="RVC voice" else "")
         self.section.setText(q.title()+" — каталог сообщества")
         self.search_status.setText("Поиск моделей…")
-        self.search_worker=SearchWorker(q); self.search_worker.results.connect(self.show_results); self.search_worker.failed.connect(lambda e:self.search_status.setText("Не удалось получить каталог: "+e)); self.search_worker.start()
+        self.search_worker=SearchWorker(q); self.search_workers.append(self.search_worker); self.search_worker.finished.connect(lambda w=self.search_worker: self.search_workers.remove(w) if w in self.search_workers else None); self.search_worker.results.connect(self.show_results); self.search_worker.failed.connect(lambda e:self.search_status.setText("Не удалось получить каталог: "+e)); self.search_worker.start()
 
     def search_models(self):
         q=self.search.text().strip() or "RVC voice"
         self.section.setText("Результаты поиска: "+q); self.search_status.setText("Ищу модели…")
-        self.search_worker=SearchWorker(q); self.search_worker.results.connect(self.show_results); self.search_worker.failed.connect(lambda e:self.search_status.setText("Ошибка поиска: "+e)); self.search_worker.start()
+        self.search_worker=SearchWorker(q); self.search_workers.append(self.search_worker); self.search_worker.finished.connect(lambda w=self.search_worker: self.search_workers.remove(w) if w in self.search_workers else None); self.search_worker.results.connect(self.show_results); self.search_worker.failed.connect(lambda e:self.search_status.setText("Ошибка поиска: "+e)); self.search_worker.start()
 
     def select_voice(self,data):
         self.selected_voice=data; self.selected_label.setText(data["id"]); self.install_btn.setEnabled(True)
