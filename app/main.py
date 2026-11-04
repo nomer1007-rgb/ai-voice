@@ -1,188 +1,103 @@
-import os, sys, json, shutil, zipfile, subprocess, threading, urllib.request, urllib.error
+import json, os, shutil, sys, urllib.request, urllib.parse
 from pathlib import Path
-from PySide6.QtCore import Qt, QThread, Signal, QUrl
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QPushButton, QProgressBar, QTextEdit, QMessageBox, QFrame)
-from PySide6.QtWebEngineWidgets import QWebEngineView
+    QLabel, QPushButton, QListWidget, QListWidgetItem, QFileDialog, QMessageBox, QLineEdit,
+    QProgressBar, QFrame)
 
-APP_NAME = "AI Voice Changer RTX"
-HF_API = "https://huggingface.co/api/models/wok000/vcclient000/tree/main?recursive=true&expand=false"
-HF_BASE = "https://huggingface.co/wok000/vcclient000/resolve/main/"
-LOCAL_URL = "http://127.0.0.1:18888/"
+APP_NAME = "Real Voice AI"
+SUPPORTED = {".pth", ".onnx"}
 
-def app_dir():
-    base = os.environ.get("LOCALAPPDATA") or str(Path.home())
-    p = Path(base) / "AIVoiceChangerRTX"
-    p.mkdir(parents=True, exist_ok=True)
+
+def data_dir():
+    p = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "RealVoiceAI"
+    (p / "models").mkdir(parents=True, exist_ok=True)
     return p
 
-def bundled_path(*parts):
-    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
-    return base.joinpath(*parts)
 
-class SetupWorker(QThread):
+class DownloadWorker(QThread):
     progress = Signal(int)
-    message = Signal(str)
     done = Signal(bool, str)
-
+    def __init__(self, url, target):
+        super().__init__(); self.url=url; self.target=target
     def run(self):
-        target = app_dir() / "engine"
-        target.mkdir(parents=True, exist_ok=True)
-        marker = target / ".installed"
-        if marker.exists():
-            self.done.emit(True, "Движок уже установлен.")
-            return
         try:
-            self.message.emit("Проверяю доступную CUDA-сборку движка…")
-            req = urllib.request.Request(HF_API, headers={"User-Agent": "AI-Voice-Changer-RTX/3.0"})
-            with urllib.request.urlopen(req, timeout=45) as r:
-                listing = json.loads(r.read().decode("utf-8"))
-            names = [x.get("path", "") for x in listing if x.get("type") == "file"]
-            candidates = [n for n in names if n.lower().endswith(".zip") and "vcclient_win_cuda_" in n.lower()]
-            if not candidates:
-                candidates = [n for n in names if n.lower().endswith(".zip") and "vcclient_win_" in n.lower() and "cuda" in n.lower()]
-            if not candidates:
-                raise RuntimeError("Не нашёл Windows CUDA-архив в официальном каталоге VCClient.")
-            # Version names are sortable in the upstream repository's naming convention.
-            archive_name = sorted(candidates)[-1]
-            url = HF_BASE + urllib.parse.quote(archive_name)
-            archive = target / "engine.zip"
-            self.message.emit("Скачиваю CUDA-движок: " + archive_name)
-            req = urllib.request.Request(url, headers={"User-Agent": "AI-Voice-Changer-RTX/3.0"})
-            with urllib.request.urlopen(req, timeout=90) as response, open(archive, "wb") as out:
-                total = int(response.headers.get("Content-Length", "0") or 0)
-                got = 0
+            req = urllib.request.Request(self.url, headers={"User-Agent":"RealVoiceAI/4.0"})
+            with urllib.request.urlopen(req, timeout=40) as r, open(self.target, "wb") as f:
+                total = int(r.headers.get("Content-Length", "0") or 0); got=0
                 while True:
-                    chunk = response.read(1024 * 1024)
-                    if not chunk: break
-                    out.write(chunk); got += len(chunk)
-                    if total: self.progress.emit(min(95, int(got * 95 / total)))
-            self.message.emit("Распаковываю движок…")
-            with zipfile.ZipFile(archive) as z:
-                z.extractall(target)
-            archive.unlink(missing_ok=True)
-            marker.write_text(archive_name, encoding="utf-8")
-            self.progress.emit(100)
-            self.done.emit(True, "Движок установлен.")
+                    b=r.read(1024*1024)
+                    if not b: break
+                    f.write(b); got += len(b)
+                    if total: self.progress.emit(min(100, int(got*100/total)))
+            if self.target.stat().st_size < 1024:
+                self.target.unlink(missing_ok=True); raise RuntimeError("Скачанный файл слишком маленький или пустой.")
+            self.done.emit(True, "Модель скачана. Проверьте её совместимость перед использованием.")
         except Exception as e:
-            self.done.emit(False, str(e))
+            self.target.unlink(missing_ok=True); self.done.emit(False, str(e))
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
-        super().__init__()
-        self.setWindowTitle(APP_NAME + " — V3")
-        self.resize(1180, 760)
-        self.engine_proc = None
-        self.worker = None
-        self.root = QWidget(); self.setCentralWidget(self.root)
-        layout = QVBoxLayout(self.root); layout.setContentsMargins(20,18,20,18); layout.setSpacing(12)
+        super().__init__(); self.setWindowTitle("Real Voice AI — V4"); self.resize(900, 650)
+        self.root=data_dir(); self.models=self.root/"models"; self.worker=None
+        w=QWidget(); self.setCentralWidget(w); lay=QVBoxLayout(w); lay.setContentsMargins(26,22,26,22); lay.setSpacing(14)
+        head=QHBoxLayout(); title=QLabel("REAL VOICE AI"); title.setObjectName("title"); head.addWidget(title); head.addStretch(); badge=QLabel("V4 • NVIDIA RTX"); badge.setObjectName("muted"); head.addWidget(badge); lay.addLayout(head)
+        intro=QLabel("Твои голосовые модели в одном месте"); intro.setObjectName("subtitle"); lay.addWidget(intro)
+        self.status=QLabel("Менеджер моделей готов. Движок преобразования пока не подключён."); self.status.setObjectName("status"); self.status.setWordWrap(True); lay.addWidget(self.status)
+        row=QHBoxLayout(); self.list=QListWidget(); self.list.setMinimumWidth(430); row.addWidget(self.list,2)
+        right=QVBoxLayout(); right.addWidget(QLabel("Добавить голос"))
+        self.add_file=QPushButton("＋  Импортировать файл модели"); self.add_file.clicked.connect(self.import_file); right.addWidget(self.add_file)
+        self.url=QLineEdit(); self.url.setPlaceholderText("https://.../voice.pth или voice.onnx"); right.addWidget(self.url)
+        self.add_url=QPushButton("Скачать модель по ссылке"); self.add_url.clicked.connect(self.download_model); right.addWidget(self.add_url)
+        self.progress=QProgressBar(); self.progress.setValue(0); right.addWidget(self.progress)
+        right.addSpacing(14); right.addWidget(QLabel("Форматы")); fmt=QLabel("Основная модель: .pth или .onnx\nДополнительный индекс: .index\nИндекс не заменяет основную модель."); fmt.setObjectName("muted"); right.addWidget(fmt)
+        right.addStretch(); self.remove=QPushButton("Удалить выбранную модель"); self.remove.clicked.connect(self.remove_model); right.addWidget(self.remove)
+        row.addLayout(right,3); lay.addLayout(row)
+        bottom=QHBoxLayout(); self.refresh=QPushButton("Обновить список"); self.refresh.clicked.connect(self.refresh_models); bottom.addWidget(self.refresh); bottom.addStretch(); self.start=QPushButton("Преобразование голоса — пока недоступно"); self.start.setEnabled(False); bottom.addWidget(self.start); lay.addLayout(bottom)
+        note=QLabel("Важно: V4 сейчас содержит новый интерфейс и менеджер моделей. Реальное преобразование в микрофон ещё не реализовано; эта сборка не выдаёт простой Pitch за смену голоса."); note.setObjectName("warning"); note.setWordWrap(True); lay.addWidget(note)
+        self.setStyleSheet('''QMainWindow{background:#11151d;color:#eef2f7} QWidget{color:#eef2f7;font-size:14px} QLabel#title{font-size:27px;font-weight:800;letter-spacing:2px} QLabel#subtitle{font-size:18px;color:#c6d2e1} QLabel#muted{color:#91a0b4} QLabel#status{background:#1b2635;border:1px solid #30445c;border-radius:10px;padding:12px} QLabel#warning{background:#342b1c;color:#f4d69b;border-radius:9px;padding:12px} QListWidget{background:#171e29;border:1px solid #2c394a;border-radius:12px;padding:8px} QPushButton{background:#273448;border:1px solid #3b4d65;border-radius:9px;padding:12px} QPushButton:hover{background:#344963} QPushButton:disabled{color:#778394;background:#1a202a} QLineEdit{background:#171e29;border:1px solid #3b4d65;border-radius:8px;padding:11px} QProgressBar{background:#202a38;border:0;border-radius:5px;height:9px} QProgressBar::chunk{background:#49b98c;border-radius:5px}''')
+        self.refresh_models()
 
-        top = QHBoxLayout()
-        title = QLabel("AI VOICE CHANGER"); title.setObjectName("title")
-        ver = QLabel("V3  •  NVIDIA CUDA"); ver.setObjectName("muted")
-        top.addWidget(title); top.addStretch(); top.addWidget(ver)
-        layout.addLayout(top)
+    def refresh_models(self):
+        self.list.clear()
+        for p in sorted(self.models.iterdir()):
+            if p.is_file() and p.suffix.lower() in SUPPORTED:
+                idx = p.with_suffix('.index')
+                label=f"{p.name}   •   {p.stat().st_size/1024/1024:.1f} MB" + ("   •   INDEX" if idx.exists() else "")
+                self.list.addItem(QListWidgetItem(label))
+        if self.list.count()==0: self.list.addItem("Пока нет моделей — добавь .pth или .onnx")
 
-        self.status = QLabel("Проверка компонентов…"); self.status.setObjectName("status")
-        layout.addWidget(self.status)
-        self.progress = QProgressBar(); self.progress.setRange(0,100); self.progress.setValue(0)
-        self.progress.setTextVisible(False); layout.addWidget(self.progress)
+    def import_file(self):
+        files,_=QFileDialog.getOpenFileNames(self,"Выбери модель RVC",str(Path.home()),"Модели (*.pth *.onnx *.index)")
+        if not files: return
+        for name in files:
+            src=Path(name)
+            if src.suffix.lower() not in SUPPORTED and src.suffix.lower() != '.index': continue
+            dest=self.models/src.name
+            if src.resolve()!=dest.resolve(): shutil.copy2(src,dest)
+        self.refresh_models(); self.status.setText("Файлы добавлены. Совместимость архитектуры модели ещё нужно проверить движком.")
 
-        row = QHBoxLayout()
-        self.install_btn = QPushButton("Установить / проверить движок")
-        self.install_btn.clicked.connect(self.install_engine)
-        self.start_btn = QPushButton("Запустить преобразование")
-        self.start_btn.setObjectName("primary"); self.start_btn.clicked.connect(self.start_engine)
-        self.stop_btn = QPushButton("Остановить")
-        self.stop_btn.clicked.connect(self.stop_engine)
-        row.addWidget(self.install_btn); row.addWidget(self.start_btn); row.addWidget(self.stop_btn)
-        layout.addLayout(row)
+    def download_model(self):
+        url=self.url.text().strip()
+        if not url.startswith(('https://','http://')):
+            QMessageBox.warning(self,"Ссылка","Вставь прямую HTTP(S)-ссылку на файл модели."); return
+        name=Path(urllib.parse.urlparse(url).path).name
+        if not name or Path(name).suffix.lower() not in SUPPORTED | {'.index'}:
+            QMessageBox.warning(self,"Формат","Ссылка должна вести напрямую на файл .pth, .onnx или .index."); return
+        target=self.models/name
+        self.add_url.setEnabled(False); self.progress.setValue(0); self.status.setText("Скачивание модели…")
+        self.worker=DownloadWorker(url,target); self.worker.progress.connect(self.progress.setValue); self.worker.done.connect(self.download_done); self.worker.start()
+    def download_done(self,ok,msg):
+        self.add_url.setEnabled(True); self.status.setText(msg); self.refresh_models()
+        if not ok: QMessageBox.warning(self,"Ошибка загрузки",msg)
+    def remove_model(self):
+        item=self.list.currentItem()
+        if not item: return
+        name=item.text().split('   •')[0]
+        p=self.models/name
+        if p.exists() and p.is_file():
+            p.unlink(); self.refresh_models(); self.status.setText("Файл модели удалён.")
 
-        self.web = QWebEngineView()
-        self.web.setUrl(QUrl("about:blank"))
-        self.web.setMinimumHeight(470)
-        layout.addWidget(self.web, 1)
-
-        self.log = QTextEdit(); self.log.setReadOnly(True); self.log.setMaximumHeight(90)
-        self.log.setPlaceholderText("Сообщения программы…")
-        layout.addWidget(self.log)
-
-        self.setStyleSheet("""
-            QWidget { background:#111318; color:#e9edf5; font-family:'Segoe UI'; font-size:14px; }
-            QLabel#title { font-size:23px; font-weight:700; letter-spacing:1px; }
-            QLabel#muted { color:#929baa; }
-            QLabel#status { color:#b9c6d8; padding:8px 0; }
-            QPushButton { background:#242a35; border:1px solid #343c4b; border-radius:9px; padding:12px 16px; }
-            QPushButton:hover { background:#30394a; }
-            QPushButton#primary { background:#5268e8; border:0; font-weight:700; }
-            QPushButton#primary:hover { background:#6478f1; }
-            QProgressBar { background:#252a34; border:0; border-radius:5px; height:8px; }
-            QProgressBar::chunk { background:#6478f1; border-radius:5px; }
-            QTextEdit { background:#171b22; border:1px solid #2b313d; border-radius:8px; padding:8px; color:#aeb8c8; }
-        """)
-        self.log_line("Готово к первому запуску. Для работы требуется интернет при загрузке движка.")
-        self.install_engine()
-
-    def log_line(self, text):
-        self.log.append(text)
-
-    def install_engine(self):
-        if self.worker and self.worker.isRunning(): return
-        self.install_btn.setEnabled(False)
-        self.status.setText("Подготовка движка преобразования голоса…")
-        self.progress.setValue(0)
-        self.worker = SetupWorker()
-        self.worker.message.connect(self.log_line)
-        self.worker.progress.connect(self.progress.setValue)
-        self.worker.done.connect(self.install_finished)
-        self.worker.start()
-
-    def install_finished(self, ok, msg):
-        self.install_btn.setEnabled(True)
-        self.log_line(msg)
-        if ok:
-            self.status.setText("Движок готов. Нажми «Запустить преобразование».")
-            self.progress.setValue(100)
-        else:
-            self.status.setText("Не удалось подготовить движок.")
-            QMessageBox.warning(self, "Ошибка установки", msg + "\nПроверь интернет и повтори попытку.")
-
-    def find_start_script(self):
-        engine = app_dir() / "engine"
-        scripts = list(engine.rglob("start_http.bat")) + list(engine.rglob("start.bat"))
-        return scripts[0] if scripts else None
-
-    def start_engine(self):
-        script = self.find_start_script()
-        if not script:
-            QMessageBox.information(self, "Нужен движок", "Сначала установи или проверь движок.")
-            return
-        if self.engine_proc and self.engine_proc.poll() is None:
-            self.web.setUrl(QUrl(LOCAL_URL)); return
-        try:
-            self.log_line("Запускаю движок преобразования…")
-            self.engine_proc = subprocess.Popen(["cmd.exe", "/c", str(script)],
-                cwd=str(script.parent), creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
-            self.status.setText("Движок запускается. Интерфейс откроется здесь через несколько секунд.")
-            self.web.setUrl(QUrl(LOCAL_URL))
-        except Exception as e:
-            QMessageBox.critical(self, "Ошибка запуска", str(e))
-
-    def stop_engine(self):
-        if self.engine_proc and self.engine_proc.poll() is None:
-            subprocess.run(["taskkill", "/PID", str(self.engine_proc.pid), "/T", "/F"],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            self.log_line("Процесс движка остановлен.")
-        self.status.setText("Движок остановлен.")
-
-    def closeEvent(self, event):
-        # Keep engine alive only if user explicitly chooses; default closes it with the app.
-        self.stop_engine()
-        event.accept()
-
-if __name__ == "__main__":
-    import urllib.parse
-    app = QApplication(sys.argv)
-    app.setApplicationName(APP_NAME)
-    w = MainWindow(); w.show()
-    sys.exit(app.exec())
+if __name__=='__main__':
+    app=QApplication(sys.argv); win=MainWindow(); win.show(); sys.exit(app.exec())
