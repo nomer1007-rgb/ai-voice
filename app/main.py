@@ -36,7 +36,10 @@ class SearchWorker(QThread):
         # literal repository names, so always retain the RVC term.
         terms=[]
         raw=(self.query or "").strip()
-        if not raw or raw.lower() in ("rvc voice","all","все"):
+        russian_category = raw == "__RUSSIAN_RVC__"
+        if russian_category:
+            terms=["Russian RVC","Russian voice RVC","русский RVC","ru RVC voice"]
+        elif not raw or raw.lower() in ("rvc voice","all","все"):
             terms=["RVC"]
         else:
             terms=[raw, "RVC"]
@@ -57,12 +60,13 @@ class SearchWorker(QThread):
                     found.append({"id":mid,"source":"Hugging Face","downloads":m.get("downloads",0),"likes":m.get("likes",0),"pth_files":pths,"index_files":idxs})
             except Exception as e:
                 errors.append("Hugging Face: "+str(e))
-            if found: break
+            if found and not russian_category: break
         # GitHub is a fallback only; avoid serially walking dozens of huge trees.
         if not found:
             self.progress.emit("На Hugging Face ничего не найдено. Проверяю GitHub…")
             try:
-                terms_q=urllib.parse.quote((raw+" RVC") if raw else "RVC voice conversion")
+                github_query = "Russian RVC voice model" if russian_category else ((raw+" RVC") if raw else "RVC voice conversion")
+                terms_q=urllib.parse.quote(github_query)
                 repos=get_json("https://api.github.com/search/repositories?q="+terms_q+"&per_page=12&sort=stars")
                 for repo in repos.get("items",[])[:12]:
                     owner=repo.get("owner",{}).get("login",""); name=repo.get("name",""); branch=repo.get("default_branch","main")
@@ -160,7 +164,7 @@ class MainWindow(QMainWindow):
         searchbtn=QPushButton("Найти"); searchbtn.setObjectName("primary"); searchbtn.clicked.connect(self.search_models); top.addWidget(searchbtn)
         ml.addLayout(top)
         self.categories=QHBoxLayout()
-        for label,query in [("Все","RVC voice"),("Популярные","RVC voice popular"),("Мужские","male RVC voice"),("Женские","female RVC voice"),("Аниме","anime character RVC"),("Персонажи","fictional character RVC")]:
+        for label,query in [("Все","RVC voice"),("Русские","__RUSSIAN_RVC__"),("Популярные","RVC voice popular"),("Мужские","male RVC voice"),("Женские","female RVC voice"),("Персонажи","fictional character RVC")]:
             b=QPushButton(label); b.clicked.connect(lambda checked=False,q=query:self.load_category(q)); self.categories.addWidget(b)
         ml.addLayout(self.categories)
         self.pages=QStackedWidget(); ml.addWidget(self.pages,1)
