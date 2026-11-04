@@ -54,7 +54,7 @@ class EngineWorker(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Real Voice AI — V5.1")
+        self.setWindowTitle("Real Voice AI — V5.2")
         self.resize(940, 690)
         self.root = data_root()
         self.models = self.root/"models"
@@ -70,7 +70,7 @@ class MainWindow(QMainWindow):
         top = QHBoxLayout()
         title = QLabel("REAL VOICE AI"); title.setObjectName("title")
         top.addWidget(title); top.addStretch()
-        v = QLabel("V5.1 • RVC REALTIME"); v.setObjectName("muted"); top.addWidget(v)
+        v = QLabel("V5.2 • RVC REALTIME"); v.setObjectName("muted"); top.addWidget(v)
         layout.addLayout(top)
         sub = QLabel("Нейросетевое преобразование голоса в реальном времени")
         sub.setObjectName("subtitle"); layout.addWidget(sub)
