@@ -1,4 +1,4 @@
-import os, sys, json, shutil, subprocess, re
+import os, sys, json, shutil, subprocess
 from pathlib import Path
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -54,7 +54,7 @@ class EngineWorker(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Real Voice AI — V5.3")
+        self.setWindowTitle("Real Voice AI — V5.4")
         self.resize(940, 690)
         self.root = data_root()
         self.models = self.root/"models"
@@ -70,7 +70,7 @@ class MainWindow(QMainWindow):
         top = QHBoxLayout()
         title = QLabel("REAL VOICE AI"); title.setObjectName("title")
         top.addWidget(title); top.addStretch()
-        v = QLabel("V5.3 • RVC REALTIME"); v.setObjectName("muted"); top.addWidget(v)
+        v = QLabel("V5.4 • RVC REALTIME"); v.setObjectName("muted"); top.addWidget(v)
         layout.addLayout(top)
         sub = QLabel("Нейросетевое преобразование голоса в реальном времени")
         sub.setObjectName("subtitle"); layout.addWidget(sub)
@@ -185,18 +185,24 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self,"RVC не установлен","Сначала нажми «Установить / обновить движок»."); return
         self.sync_models()
         try:
-            # Upstream's -I flag disables normal script-directory imports and
-            # causes ModuleNotFoundError for the project's local "tools" package.
+            # The upstream batch file starts Python with -I (isolated mode).
+            # On current Python this prevents imports from the RVC project root,
+            # causing "No module named tools". Remove only that flag, preserving
+            # the upstream console setup, PATH and pause behavior.
             launcher_text = bat.read_text(encoding="utf-8-sig")
-            fixed_text = re.sub(
-                r"(?im)^\\s*runtime\\\\python\\.exe\\s+-I\\s+realtime_gui\\.py\\s*$",
-                r"runtime\\python.exe realtime_gui.py",
-                launcher_text,
+            fixed_text = launcher_text.replace(
+                "runtime\\python.exe -I realtime_gui.py",
+                "runtime\\python.exe realtime_gui.py",
             )
             if fixed_text != launcher_text:
                 bat.write_text(fixed_text, encoding="utf-8")
-            self.engine_process=subprocess.Popen(["cmd.exe","/c",str(bat)],cwd=str(self.engine))
-            self.status.setText("RVC Real-Time запущен. В отдельном окне выбери модель, микрофон и выход. Для Discord укажи виртуальный аудиокабель как микрофон.")
+            python = self.engine / "runtime" / "python.exe"
+            if not python.is_file():
+                raise FileNotFoundError(f"Не найден Python движка: {python}")
+            env = os.environ.copy()
+            env["PATH"] = str(self.engine / "runtime") + os.pathsep + env.get("PATH", "")
+            self.engine_process=subprocess.Popen(["cmd.exe","/c",str(bat)],cwd=str(self.engine),env=env)
+            self.status.setText("RVC Real-Time запускается. В отдельном окне выбери модель, микрофон и выход. Для Discord укажи виртуальный аудиокабель как микрофон.")
         except Exception as e: QMessageBox.critical(self,"Ошибка запуска",str(e))
     def stop_engine(self):
         # The official RVC GUI may spawn child processes; close its window normally.
