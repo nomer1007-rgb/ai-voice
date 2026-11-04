@@ -178,7 +178,7 @@ class MainWindow(QMainWindow):
         self.local_search=QLineEdit(); self.local_search.setPlaceholderText("⌕   Найти среди моих голосов…"); self.local_search.setFixedWidth(310); self.local_search.textChanged.connect(self.refresh_local); mine_head.addWidget(self.local_search)
         imp=QPushButton("Импортировать голос"); imp.setObjectName("primary"); imp.clicked.connect(self.import_model); mine_head.addWidget(imp); vl.addLayout(mine_head)
         self.local_scroll=QScrollArea(); self.local_scroll.setWidgetResizable(True); self.local_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self.local_host=QWidget(); self.local_grid=QGridLayout(self.local_host); self.local_grid.setContentsMargins(2,8,2,8); self.local_grid.setSpacing(12)
+        self.local_host=QWidget(); self.local_grid=QGridLayout(self.local_host); self.local_grid.setContentsMargins(2,8,2,8); self.local_grid.setSpacing(12); self.local_grid.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         self.local_scroll.setWidget(self.local_host); vl.addWidget(self.local_scroll,1)
         self.local_count=QLabel("Голосов: 0"); self.local_count.setObjectName("muted"); vl.addWidget(self.local_count)
         self.pages.addWidget(mine)
@@ -356,9 +356,9 @@ class MainWindow(QMainWindow):
         query=self.local_search.text().strip().lower() if hasattr(self,"local_search") else ""
         shown=[p for p in files if query in p.stem.lower()]
         for i,p in enumerate(shown):
-            card=QFrame(); card.setObjectName("voiceCard"); box=QVBoxLayout(card); box.setContentsMargins(14,12,14,12); box.setSpacing(8)
-            icon=QLabel("♫"); icon.setObjectName("voiceIcon"); icon.setAlignment(Qt.AlignmentFlag.AlignCenter); box.addWidget(icon)
-            name=QLabel(p.stem); name.setObjectName("voiceName"); name.setWordWrap(True); box.addWidget(name)
+            card=QFrame(); card.setObjectName("voiceCard"); card.setFixedSize(300,168); box=QVBoxLayout(card); box.setContentsMargins(12,10,12,10); box.setSpacing(5)
+            head=QHBoxLayout(); icon=QLabel("♫"); icon.setObjectName("voiceIcon"); icon.setAlignment(Qt.AlignmentFlag.AlignCenter); icon.setFixedSize(42,42); head.addWidget(icon)
+            name=QLabel(p.stem); name.setObjectName("voiceName"); name.setWordWrap(True); head.addWidget(name,1); box.addLayout(head)
             idx=next((x for x in self.models.glob("*.index") if p.stem.lower() in x.stem.lower() or x.stem.lower() in p.stem.lower()),None)
             size=p.stat().st_size/(1024*1024)
             meta=QLabel(f"RVC · .pth · {size:.1f} МБ"+(" · .index" if idx else "")); meta.setObjectName("muted"); box.addWidget(meta)
@@ -367,7 +367,7 @@ class MainWindow(QMainWindow):
             use=QPushButton("✓  Активен" if p.name==self.active else "Применить"); use.setObjectName("primary"); use.setEnabled(p.name!=self.active)
             use.clicked.connect(lambda checked=False,path=p:self.set_local_active(path)); actions.addWidget(use,1)
             remove=QPushButton("⋮"); remove.setFixedWidth(40); remove.setToolTip("Удалить модель"); remove.clicked.connect(lambda checked=False,path=p:self.delete_model_file(path)); actions.addWidget(remove)
-            box.addLayout(actions); self.local_grid.addWidget(card,i//3,i%3)
+            box.addLayout(actions); self.local_grid.addWidget(card,i//3,i%3,Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         if not shown:
             empty=QLabel("Пока нет установленных голосов." if not files else "По этому запросу ничего не найдено."); empty.setObjectName("muted"); self.local_grid.addWidget(empty,0,0)
         if hasattr(self,"local_count"): self.local_count.setText(f"Голосов: {len(files)}")
@@ -381,6 +381,8 @@ class MainWindow(QMainWindow):
 
     def set_local_active(self,path):
         self.active=path.name; self.save(); self.refresh_local(); self.sync_models()
+        if hasattr(self,"selected_label"): self.selected_label.setText(path.stem)
+        if hasattr(self,"set_active_btn"): self.set_active_btn.setEnabled(False)
         self.search_status.setText(f"Активный голос: {path.stem}. Перезапусти RVC, если движок уже работает.")
 
     def choose_local(self):
