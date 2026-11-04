@@ -1,5 +1,5 @@
 ﻿#define MyAppName "Real Voice AI"
-#define MyAppVersion "5.4.0"
+#define MyAppVersion "6.0.0"
 #define MyAppExeName "RealVoiceAI.exe"
 [Setup]
 AppId={{D9E9A0D4-2E13-4E0C-9F21-4A1D45A7B440}
@@ -9,7 +9,7 @@ AppPublisher=Real Voice AI
 DefaultDirName={autopf}\Real Voice AI
 DefaultGroupName={#MyAppName}
 OutputDir=..\installer-output
-OutputBaseFilename=RealVoiceAI-Setup-v5.4
+OutputBaseFilename=RealVoiceAI-Setup-v6.0
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
