@@ -38,3 +38,7 @@ GitHub → Actions → **Build Real Voice AI V5 installer** → Run workflow →
 
 ## Компоненты и лицензии
 RVC backend скачивается из [RVC-Project/Retrieval-based-Voice-Conversion-WebUI](https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI) при установке движка. Ознакомься с лицензией upstream-проекта и лицензиями его зависимостей.
+
+
+### Исправление V5.1
+В V5.1 установочный скрипт `scripts/install_rvc.ps1` дополнительно копируется Inno Setup в `{app}\scripts`, а приложение ищет его как в каталоге PyInstaller, так и рядом с установленной программой. Это исправляет ошибку «Не найден файл install_rvc.ps1».
