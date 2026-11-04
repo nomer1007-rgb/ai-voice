@@ -1,4 +1,4 @@
-import os, sys, json, shutil, subprocess
+import os, sys, json, shutil, subprocess, re
 from pathlib import Path
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -185,6 +185,16 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self,"RVC не установлен","Сначала нажми «Установить / обновить движок»."); return
         self.sync_models()
         try:
+            # Upstream's -I flag disables normal script-directory imports and
+            # causes ModuleNotFoundError for the project's local "tools" package.
+            launcher_text = bat.read_text(encoding="utf-8-sig")
+            fixed_text = re.sub(
+                r"(?im)^\\s*runtime\\\\python\\.exe\\s+-I\\s+realtime_gui\\.py\\s*$",
+                r"runtime\\python.exe realtime_gui.py",
+                launcher_text,
+            )
+            if fixed_text != launcher_text:
+                bat.write_text(fixed_text, encoding="utf-8")
             self.engine_process=subprocess.Popen(["cmd.exe","/c",str(bat)],cwd=str(self.engine))
             self.status.setText("RVC Real-Time запущен. В отдельном окне выбери модель, микрофон и выход. Для Discord укажи виртуальный аудиокабель как микрофон.")
         except Exception as e: QMessageBox.critical(self,"Ошибка запуска",str(e))
