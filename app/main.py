@@ -608,7 +608,7 @@ class MainWindow(QMainWindow):
                         printt("MagicVoice controls update failed: %s", controls_error)
 """
                 source = source.replace(read_line, poll, 1)
-                source = source.replace('''                elif event == "stop_vc" or event != "start_vc":''','''                elif event == "stop_vc" or (event is not None and event != "start_vc"):''',1)
+                source = source.replace('''                elif event == "stop_vc" or event != "start_vc":''','''                elif event == "stop_vc" or (event is not None and event not in ("start_vc", "__TIMEOUT__")):''',1)
             elif "REALVOICEAI_CONTROLS" not in source:
                 raise RuntimeError("Не удалось встроить обработчик live-настроек в цикл RVC.")
 
