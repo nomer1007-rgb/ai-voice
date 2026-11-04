@@ -3,7 +3,7 @@ from pathlib import Path
 from PySide6.QtCore import QThread, Signal, QTimer, Qt
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QListWidget, QListWidgetItem, QFileDialog, QMessageBox, QProgressBar,
-    QFrame, QLineEdit, QScrollArea, QGridLayout, QStackedWidget, QSizePolicy, QComboBox)
+    QFrame, QLineEdit, QScrollArea, QGridLayout, QStackedWidget, QSizePolicy, QComboBox, QSlider, QCheckBox)
 
 APP_NAME = "Real Voice AI"
 API = "https://huggingface.co/api"
@@ -175,7 +175,34 @@ class MainWindow(QMainWindow):
         refresh=QPushButton("Обновить устройства"); refresh.clicked.connect(self.refresh_audio_devices); devices.addWidget(refresh)
         applydev=QPushButton("Применить"); applydev.setObjectName("primary"); applydev.clicked.connect(self.apply_audio_devices); devices.addWidget(applydev)
         st.addLayout(devices)
-        self.audio_hint=QLabel("Для Discord затем выбери в настройках ввода устройство соответствующее «CABLE Output» или выходу выбранного виртуального кабеля.")
+        # Native, readable voice-tuning controls. Values are written to RVC config before launch.
+        tune_title=QLabel("Качество и обработка голоса"); tune_title.setObjectName("section"); st.addWidget(tune_title)
+        tune_card=QFrame(); tune_card.setObjectName("tuneCard")
+        tune_grid=QGridLayout(tune_card); tune_grid.setContentsMargins(16,12,16,12); tune_grid.setHorizontalSpacing(22); tune_grid.setVerticalSpacing(10)
+        self.tuning_sliders={}
+        def add_tuning(row,col,key,title,minimum,maximum,default,scale=1,help_text=""):
+            cell=QWidget(); box=QVBoxLayout(cell); box.setContentsMargins(0,0,0,0); box.setSpacing(3)
+            head=QHBoxLayout(); name=QLabel(title); name.setObjectName("tuneLabel"); value=QLabel(); value.setObjectName("tuneValue"); head.addWidget(name); head.addStretch(); head.addWidget(value); box.addLayout(head)
+            slider=QSlider(Qt.Orientation.Horizontal); slider.setRange(minimum,maximum); slider.setValue(default); slider.setObjectName("tuneSlider")
+            slider.valueChanged.connect(lambda v,l=value,s=scale:l.setText(f"{v/ s:.2f}" if s>1 else str(v)))
+            value.setText(f"{default/scale:.2f}" if scale>1 else str(default)); box.addWidget(slider)
+            if help_text:
+                hint=QLabel(help_text); hint.setObjectName("muted"); hint.setWordWrap(True); box.addWidget(hint)
+            tune_grid.addWidget(cell,row,col); self.tuning_sliders[key]=(slider,scale)
+        add_tuning(0,0,"pitch","Высота голоса", -12,12,0,1,"Ниже — более низкий голос, выше — более высокий")
+        add_tuning(0,1,"index_rate","Сходство с моделью",0,100,50,100,"Выше — точнее тембр модели; слишком высокое значение может добавить артефакты")
+        add_tuning(1,0,"rms_mix_rate","Баланс громкости",0,100,25,100,"Сохраняет естественную динамику исходного голоса")
+        add_tuning(1,1,"threhold","Порог микрофона",-60,0,-45,1,"Игнорирует тихий фоновый шум; ближе к 0 — меньше чувствительность")
+        add_tuning(2,0,"block_time","Отклик / задержка",5,50,25,100,"Меньше — быстрее отклик, но выше нагрузка и риск щелчков")
+        add_tuning(2,1,"extra_time","Стабильность обработки",5,50,25,10,"Больше — устойчивее обработка, но может вырасти задержка")
+        st.addWidget(tune_card)
+        noise_row=QHBoxLayout()
+        self.input_denoise=QCheckBox("Шумоподавление микрофона"); self.input_denoise.setChecked(True)
+        self.output_denoise=QCheckBox("Очистка выходного звука"); self.output_denoise.setChecked(False)
+        noise_row.addWidget(self.input_denoise); noise_row.addWidget(self.output_denoise); noise_row.addStretch(); st.addLayout(noise_row)
+        noise_note=QLabel("Встроенный подавитель RVC снижает постоянный фоновый шум. Для сильного шума лучше использовать отдельный RNNoise/RTX Voice — встроенный фильтр не заменяет их.")
+        noise_note.setObjectName("muted"); noise_note.setWordWrap(True); st.addWidget(noise_note)
+                self.audio_hint=QLabel("Для Discord затем выбери в настройках ввода устройство соответствующее «CABLE Output» или выходу выбранного виртуального кабеля.")
         self.audio_hint.setObjectName("muted"); self.audio_hint.setWordWrap(True); st.addWidget(self.audio_hint)
         bar=QHBoxLayout(); launch=QPushButton("Запустить RVC"); launch.setObjectName("primary"); launch.clicked.connect(self.launch_engine); bar.addWidget(launch)
         stop=QPushButton("Остановить"); stop.clicked.connect(self.stop_engine); bar.addWidget(stop); bar.addStretch(); st.addLayout(bar)
@@ -209,6 +236,16 @@ class MainWindow(QMainWindow):
         QLabel#voiceName{font-weight:700;color:white}
         QFrame#bottomBar{background:#171733;border:1px solid #2b2952;border-radius:12px}
         QLabel#bottomName{font-weight:700}
+        QFrame#tuneCard{background:#171733;border:1px solid #302e55;border-radius:12px}
+        QLabel#tuneLabel{font-weight:700;color:#e9e7ff}
+        QLabel#tuneValue{color:#bbaaff;font-weight:800;min-width:42px}
+        QSlider#tuneSlider{min-height:20px}
+        QSlider#tuneSlider::groove:horizontal{height:6px;background:#343253;border-radius:3px}
+        QSlider#tuneSlider::sub-page:horizontal{background:#805cff;border-radius:3px}
+        QSlider#tuneSlider::handle:horizontal{background:#fff;border:2px solid #9a7cff;width:16px;height:16px;margin:-7px 0;border-radius:8px}
+        QCheckBox{spacing:8px;color:#e8e7ff}
+        QCheckBox::indicator{width:18px;height:18px;border-radius:5px;background:#252444;border:1px solid #6255a0}
+        QCheckBox::indicator:checked{background:#805cff;border:1px solid #a58bff}
         QFrame#rvcPanel{background:#15162f;border:1px solid #302e55;border-radius:10px}
         QListWidget,QScrollArea{background:#101229;border:0}
         """)
@@ -356,10 +393,35 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self,"Готово","Маршрут аудио сохранён. В Discord выбери парное устройство виртуального кабеля как устройство ввода.")
         except Exception as e:QMessageBox.critical(self,"Не удалось сохранить устройства",str(e))
 
+    def save_rvc_tuning(self):
+        cfg=self.engine/"configs"/"config.json"
+        try:
+            try:data=json.loads(cfg.read_text(encoding="utf-8"))
+            except Exception:data={}
+            data.setdefault("sr_type","sr_model")
+            data.setdefault("f0method","rmvpe")
+            for key,(slider,scale) in self.tuning_sliders.items():
+                data[key]=slider.value()/scale
+                if scale==1:data[key]=slider.value()
+            data["I_noise_reduce"]=self.input_denoise.isChecked()
+            data["O_noise_reduce"]=self.output_denoise.isChecked()
+            active=next((p for p in self.models.glob("*.pth") if p.name==self.active),None)
+            if active:
+                data["pth_path"]=str(active.resolve())
+                indices=list(self.models.glob("*.index"))
+                match=next((p for p in indices if active.stem.lower() in p.stem.lower() or p.stem.lower() in active.stem.lower()),None)
+                data["index_path"]=str(match.resolve()) if match else ""
+            cfg.parent.mkdir(parents=True,exist_ok=True)
+            cfg.write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding="utf-8")
+            self.audio_hint.setText("Настройки качества сохранены. Запусти или перезапусти RVC, чтобы применить их.")
+        except Exception as e:
+            QMessageBox.warning(self,"Настройки RVC","Не удалось сохранить параметры: "+str(e))
+
     def launch_engine(self):
         bat=self.engine/"go-realtime_gui.bat"
         if not bat.exists():QMessageBox.information(self,"RVC не установлен","Сначала установи движок.");return
         self.sync_models()
+        self.save_rvc_tuning()
         try:
             text=bat.read_text(encoding="utf-8-sig"); fixed=text.replace("runtime\\python.exe -I realtime_gui.py","runtime\\python.exe realtime_gui.py")
             if fixed!=text:bat.write_text(fixed,encoding="utf-8")
