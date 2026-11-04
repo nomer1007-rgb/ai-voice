@@ -1,5 +1,5 @@
-﻿#define MyAppName "AI Voice Changer RTX"
-#define MyAppVersion "3.0.0"
+#define MyAppName "AI Voice Changer RTX"
+#define MyAppVersion "4.0.0"
 #define MyAppPublisher "AI Voice Changer RTX"
 #define MyAppExeName "AIVoiceChangerRTX.exe"
 
@@ -11,7 +11,7 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\AI Voice Changer RTX
 DefaultGroupName={#MyAppName}
 OutputDir=..\release
-OutputBaseFilename=AI-Voice-Changer-RTX-Setup-v3
+OutputBaseFilename=AI-Voice-Changer-RTX-Setup-v4
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
