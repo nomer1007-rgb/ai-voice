@@ -214,8 +214,8 @@ class MainWindow(QMainWindow):
         self.install_btn.setEnabled(True)
         if not ok:
             QMessageBox.warning(self,"Не удалось установить голос",pth); self.search_status.setText("Установка не выполнена."); return
-        self.refresh_local()
-        msg="Модель установлена: "+Path(pth).name
+        self.active=Path(pth).name; self.save(); self.sync_models(); self.refresh_local()
+        msg="Модель установлена и выбрана активной: "+Path(pth).name
         if idx:msg+="\\nИндекс: "+Path(idx).name
         else:msg+="\\nИндекс не найден — голос можно попробовать без индекса."
         QMessageBox.information(self,"Голос установлен",msg)
