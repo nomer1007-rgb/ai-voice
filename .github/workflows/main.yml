@@ -34,6 +34,6 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: RealVoiceAI-Setup-v5.4
+          name: RealVoiceAI-Setup-v6.0
           path: installer-output/RealVoiceAI-Setup-v6.0.exe
           if-no-files-found: error
