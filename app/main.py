@@ -621,9 +621,11 @@ class MainWindow(QMainWindow):
         # whose executable is this app's private embedded Python runtime.
         py=self.engine/"runtime"/"python.exe"
         if py.exists():
-            ps_script = "$target = '" + str(py).replace("'","''") + "'; " +
-                "Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -ieq $target } | " +
+            ps_script = (
+                "$target = '" + str(py).replace("'","''") + "'; "
+                "Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -ieq $target } | "
                 "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
+            )
             try:
                 subprocess.run(["powershell.exe","-NoProfile","-ExecutionPolicy","Bypass","-Command",ps_script],
                                stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=20)
